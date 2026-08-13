@@ -52,7 +52,7 @@ Issues = "https://github.com/ryanrodrigues25200525-svg/openfilings/issues"
 Changelog = "https://github.com/ryanrodrigues25200525-svg/openfilings/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-dataframe = ["pandas>=2.2,<4"]
+dataframe = ["pandas>=3.0.5,<4"]
 pdf-detect = ["pdf-inspector>=0.2,<0.3"]
 
 [project.scripts]
