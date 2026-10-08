@@ -53,6 +53,11 @@ All notable changes to OpenFilings are documented in this file.
   for `fca_nsm`, while SMV filings with the same marker still report PEN.
   Currency half of #6.
 
+- Pinned accuracy benchmarks for the Sweden and Singapore regression
+  guards: Volvo FY2024 (ESEF) and Keppel FY2025 (SGX) reference facts,
+  transcribed from the published annual reports and verified against a
+  live run. Closes #7.
+
 ## 0.22.0 - 2026-08-01
 
 ### Added

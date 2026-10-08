@@ -124,10 +124,12 @@ primary statements' totals and little else.
 
 ## P3 — Verification
 
-- [ ] **[#7](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/7) The Sweden and Singapore regression guards cannot fire.**
+- [x] **[#7](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/7) The Sweden and Singapore regression guards cannot fire.**
   *Fix:* pin reference facts in `benchmarks.py`, transcribed by hand from the
   published reports. That file's own rule applies — never populate it from
   extractor output.
+  *Fixed:* Volvo FY2024 (ESEF) and Keppel FY2025 (SGX) benchmarks pinned
+  from the published annual reports and verified against a live run.
 
 - [ ] **[#8](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/8) Pinned benchmarks cover 2 issuers across 25 markets.**
   *Fix:* one reviewed issuer per distinct extraction path (CVM Open Data,
