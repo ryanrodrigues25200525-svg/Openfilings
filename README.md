@@ -82,11 +82,11 @@ carries the reproductions.
 
 - [ ] [#6](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/6) — Unilever's Form 20-F extracts a ~1000× scale with a misaligned table read. Currency half fixed (FCA filings never report PEN); the rest stays loudly flagged: `validation.ok` is `false` with four failed rules, so it is never returned as trustworthy
 - [x] [#12](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/12) — one LEI can produce two company IDs when an issuer files ESEF in two jurisdictions
-- [x] [#14](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/14) — some ESEF issuers return a years-old "latest" filing; upstream gap vs discovery bug not yet separated
+- [x] [#14](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/14) — some ESEF issuers returned a years-old "latest" filing; it was a discovery bug (same-day filings broke ties on raw filing id) and the sort now prefers the newer reporting period
 
 **Verification gaps**
 
-- [x] [#7](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/7) — the Sweden and Singapore regression guards cannot fire, because both filings derive a total and the identity check correctly refuses a circular comparison
+- [x] [#7](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/7) — the Sweden and Singapore regression guards are now pinned reference facts (Volvo FY2024, Keppel FY2025); the identity check itself still correctly refuses circular comparisons on derived totals by design
 - [ ] [#8](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/8) — pinned accuracy benchmarks cover 2 issuers across 25 markets. A value can reconcile perfectly and still be wrong
 - [x] [#9](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/9) — the multi-issuer probe that found this session's defects was a throwaway script, so the next per-issuer defect will be equally invisible
 - [ ] [#11](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/11) — South Korea has never run against a live DART key; mocked tests only
