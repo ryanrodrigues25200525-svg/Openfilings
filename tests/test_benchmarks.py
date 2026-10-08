@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 from openfilings.benchmarks import (
+    ACCURACY_BENCHMARKS,
     AccuracyBenchmark,
     ReferenceFact,
     run_live_accuracy_benchmarks,
@@ -106,3 +107,14 @@ async def test_accuracy_benchmark_reports_a_value_mismatch() -> None:
         await run_live_accuracy_benchmarks(
             _FakeService(), benchmarks=(benchmark,), timeout_seconds=1
         )
+
+
+def test_benchmarks_cover_volvo_and_keppel_regression_guards() -> None:
+    """Issue #7: Sweden (AB Volvo) and Singapore (Keppel) are named
+    regression guards whose filings derive a total, so the smoke identity
+    check cannot fire on them. Pinned reference facts are the mechanism
+    built for exactly this."""
+
+    labels = [benchmark.label for benchmark in ACCURACY_BENCHMARKS]
+    assert any("Volvo" in label for label in labels)
+    assert any("Keppel" in label for label in labels)
