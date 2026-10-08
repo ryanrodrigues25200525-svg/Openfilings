@@ -438,6 +438,17 @@ _DEFAULT_CURRENCY_BY_SOURCE = {
     "smv": "PEN",
     "sfc": "COP",
 }
+# Currencies a source's filings must never report, regardless of what the
+# marker scan finds. "S/" is the Peruvian-sol thousands marker ("S/ 000")
+# that also matches the bare "s/" PEN marker, so UK filings whose tables
+# state scale as "S/ 000" (or which merely mention soles in a segment
+# note) were labelled PEN (issue #6: Unilever 20-F via the FCA NSM).
+# A filing retrieved from the FCA's UK storage mechanism must never be
+# labelled Peruvian soles; when the scan says PEN for an FCA filing,
+# fall through to the source default (None for fca_nsm) instead.
+_NEVER_CURRENCY_BY_SOURCE = {
+    "fca_nsm": frozenset({"PEN"}),
+}
 _STATEMENT_HEADINGS: dict[StatementType, tuple[str, ...]] = {
     "income_statement": (
         "statement of comprehensive income",
@@ -725,7 +736,9 @@ def _line_items_from_text(
     multiplier = _period_multiplier(lines, years)
     lines = _truncated_at_next_statement(lines, statement_type)
     header = "\n".join(lines[:30])
-    currency = _currency(header) or _DEFAULT_CURRENCY_BY_SOURCE.get(filing.source)
+    currency = _currency(
+        header, source=filing.source
+    ) or _DEFAULT_CURRENCY_BY_SOURCE.get(filing.source)
     scale = _scale(header)
     decimals = f"-{len(str(int(scale))) - 1}" if scale > 1 else "0"
     items: dict[str, FinancialLineItem] = {}
@@ -811,7 +824,7 @@ def _pdf_statement_sections(pdf_bytes: bytes) -> tuple[str, ...]:
 def _line_items_from_table(
     table: _MarkdownTable, filing: Filing
 ) -> tuple[FinancialLineItem, ...]:
-    table_format = _table_format(table)
+    table_format = _table_format(table, source=filing.source)
     if table_format is None:
         return ()
     if table_format.currency is None:
@@ -896,7 +909,9 @@ def _latest_end_date(values: tuple[FinancialValue, ...]) -> date:
     return max(value.period.end_date for value in values)
 
 
-def _table_format(table: _MarkdownTable) -> _TableFormat | None:
+def _table_format(
+    table: _MarkdownTable, *, source: str | None = None
+) -> _TableFormat | None:
     header = max(table.rows[:4], key=_year_cell_count)
     period_columns: list[tuple[int, int]] = []
     seen_years: set[int] = set()
@@ -914,7 +929,7 @@ def _table_format(table: _MarkdownTable) -> _TableFormat | None:
     scale = _scale(context)
     return _TableFormat(
         periods=tuple(period_columns),
-        currency=_currency(context),
+        currency=_currency(context, source=source),
         scale=scale,
         decimals=f"-{len(str(int(scale))) - 1}" if scale > 1 else "0",
     )
@@ -1777,9 +1792,9 @@ def _single_separator_number(value: str, separator: str) -> str:
     return value.replace(separator, ".")
 
 
-def _currency(value: str) -> str | None:
+def _currency(value: str, *, source: str | None = None) -> str | None:
     normalized = value.casefold()
-    return next(
+    detected = next(
         (
             code
             for code, markers in _CURRENCY_MARKERS
@@ -1787,6 +1802,13 @@ def _currency(value: str) -> str | None:
         ),
         None,
     )
+    if (
+        detected is not None
+        and source is not None
+        and detected in _NEVER_CURRENCY_BY_SOURCE.get(source, frozenset())
+    ):
+        return None
+    return detected
 
 
 def _has_currency_marker(value: str, marker: str) -> bool:

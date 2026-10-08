@@ -11,6 +11,7 @@ def _records() -> list[tuple[tuple[str, ...], str]]:
         (("JERÓNIMO MARTINS SGPS SA",), "jeronimo"),
         (("POWSZECHNA KASA OSZCZĘDNOŚCI BANK POLSKI",), "pko"),
         (("TÜRKİYE İŞ BANKASI A.Ş.",), "isbank"),
+        (("FORD OTOMOTİV SANAYİ A.Ş.",), "ford-otosan"),
         (("UNRELATED HOLDINGS PLC",), "unrelated"),
     ]
 
@@ -42,3 +43,32 @@ def test_match_text_folds_beyond_normalize_text() -> None:
 
 def test_unrelated_names_still_do_not_match() -> None:
     assert ranked_matches("Orsted", [(("UNRELATED HOLDINGS PLC",), "x")], limit=3) == []
+
+
+def test_extra_query_token_does_not_lose_a_strong_partial_match() -> None:
+    """Issue #10 part 1: "Ford Otosan" must score at least as well as "Ford".
+
+    The full normalized query is not a substring of the registered name
+    ("ford otomotiv sanayi a s"), so the strict substring check drops it.
+    Token-subset scoring recovers it via the shared "ford" token.
+    """
+
+    assert ranked_matches("Ford", _records(), limit=3) == ["ford-otosan"]
+    assert ranked_matches("Ford Otosan", _records(), limit=3) == ["ford-otosan"]
+
+
+def test_extra_token_tolerance_still_rejects_near_misses() -> None:
+    """Loosening the matcher must not match a 2,000-issuer registry loosely.
+
+    Fewer than half the significant tokens hit here ("unrelated" is the
+    only one), so the record stays excluded; a pure alias with no token
+    overlap ("PKO") is still unresolvable without alias data (deferred).
+    """
+
+    assert ranked_matches("Ford Unrelated Holdings", _records(), limit=3) == [
+        "unrelated"
+    ]
+    assert ranked_matches("PKO", _records(), limit=3) == []
+    # Only short tokens and no substring hit: must match nothing rather
+    # than falling through to a match-everything token path.
+    assert ranked_matches("Xq Zq", _records(), limit=3) == []

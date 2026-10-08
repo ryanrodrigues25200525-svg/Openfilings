@@ -189,6 +189,53 @@ def test_scale_ignores_a_plain_figure_that_contains_three_zeros() -> None:
     assert _scale("Amounts in S/ 000") == Decimal("1000")
 
 
+def test_fca_filing_never_reports_pen_currency() -> None:
+    """Issue #6: Unilever's 20-F via the FCA NSM was labelled PEN.
+
+    "S/ 000" (a scale-of-thousands marker) matches the bare "s/" PEN
+    marker, so the marker scan says PEN for a UK filing. The source
+    guard vetoes PEN for fca_nsm filings, falling through to the
+    source default (None) instead; a Peruvian SMV filing with the same
+    marker must still report PEN. Table/scale heuristics untouched.
+    """
+    from openfilings.xbrl.pdf_statements import _currency
+
+    assert _currency("Amounts in S/ 000") == "PEN"
+    assert _currency("Amounts in S/ 000", source="fca_nsm") is None
+    assert _currency("Amounts in S/ 000", source="smv") == "PEN"
+
+    markdown = """
+    # Consolidated balance sheet
+
+    S/ 000
+
+    |  | 2025 | 2024 |
+    | --- | ---: | ---: |
+    | Total assets | 79,750 | 75,000 |
+    | Total liabilities | 60,000 | 58,000 |
+    """
+
+    fca_financials = extract_pdf_table_financials(
+        markdown,
+        _filing(period_end=date(2025, 12, 31), source="fca_nsm", filing_type="annual"),
+        source_url="https://example.test/unilever-20f.pdf",
+        sha256="p" * 64,
+    )
+    balance_sheet = fca_financials.balance_sheet()
+    assert balance_sheet is not None
+    assert balance_sheet.currency != "PEN"
+
+    smv_financials = extract_pdf_table_financials(
+        markdown,
+        _filing(period_end=date(2025, 12, 31), source="smv", filing_type="annual"),
+        source_url="https://example.test/smv-report.pdf",
+        sha256="q" * 64,
+    )
+    smv_balance = smv_financials.balance_sheet()
+    assert smv_balance is not None
+    assert smv_balance.currency == "PEN"
+
+
 def test_indian_crore_and_lakh_headers_scale() -> None:
     """Indian filers report in crore (10^7) or lakh (10^5).
 

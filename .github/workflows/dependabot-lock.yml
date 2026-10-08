@@ -1,0 +1,55 @@
+name: Refresh uv.lock for Dependabot
+
+on:
+  pull_request:
+    paths:
+      - pyproject.toml
+      - uv.lock
+      - .github/dependabot.yml
+
+permissions:
+  contents: read
+
+jobs:
+  relock:
+    # Dependabot edits pyproject.toml but cannot run `uv lock`, so every
+    # Dependabot PR fails CI at `uv sync --locked` (issue #13). This job
+    # regenerates the lockfile on the PR branch so the upgrade is testable.
+    # Falls back to a `uv lock --check` failure message when it cannot push.
+    name: Regenerate lockfile
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.30"
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Regenerate uv.lock
+        run: uv lock
+
+      - name: Commit refreshed lockfile
+        run: |
+          if git diff --quiet -- uv.lock; then
+            echo "uv.lock is already up to date."
+          elif git push --dry-run origin HEAD:${{ github.head_ref }} 2>/dev/null; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add uv.lock
+            git commit -m "chore(deps): regenerate uv.lock for Dependabot update"
+            git push origin HEAD:${{ github.head_ref }}
+          else
+            echo "::error::uv.lock is stale for this Dependabot update. Maintainers: run \`uv lock\` on the PR branch and push."
+            uv lock --check
+          fi

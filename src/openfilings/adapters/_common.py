@@ -211,17 +211,37 @@ def ranked_matches(
     normalized_query = match_text(query)
     if not normalized_query:
         return []
-    ranked: list[tuple[int, str, Any]] = []
+    ranked: list[tuple[int, int, str, Any]] = []
     for fields, record in records:
         normalized_fields = tuple(match_text(field) for field in fields)
-        if not any(normalized_query in field for field in normalized_fields):
+        if any(normalized_query in field for field in normalized_fields):
+            if normalized_query in normalized_fields:
+                rank = 0
+            elif any(field.startswith(normalized_query) for field in normalized_fields):
+                rank = 1
+            else:
+                rank = 2
+            ranked.append((rank, 0, normalized_fields[-1], record))
             continue
-        if normalized_query in normalized_fields:
-            rank = 0
-        elif any(field.startswith(normalized_query) for field in normalized_fields):
-            rank = 1
-        else:
-            rank = 2
-        ranked.append((rank, normalized_fields[-1], record))
-    ranked.sort(key=lambda item: (item[0], item[1]))
-    return [record for _, _, record in ranked[: max(1, limit)]]
+        # Extra-token tolerance (issue #10): a query like "Ford Otosan"
+        # is never a substring of the registered name ("ford otomotiv
+        # sanayi a s"), so the strict check above turns a strong partial
+        # match into no match at all. Fall back to token-subset scoring:
+        # every significant query token that appears in a name field
+        # counts, and at least half of them must hit. Single-token
+        # queries are unaffected (one token either matches or it does
+        # not), and tokens shorter than 3 characters are ignored so
+        # stopwords like "a" or "s" cannot match every record. This does
+        # NOT resolve true aliases ("PKO" appears nowhere in the legal
+        # name) - those need per-source ticker/alias data, deferred.
+        tokens = [token for token in normalized_query.split() if len(token) >= 3]
+        if not tokens:
+            continue
+        matched = sum(
+            1 for token in tokens if any(token in field for field in normalized_fields)
+        )
+        if matched * 2 < len(tokens):
+            continue
+        ranked.append((3, len(tokens) - matched, normalized_fields[-1], record))
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]))
+    return [record for _, _, _, record in ranked[: max(1, limit)]]
