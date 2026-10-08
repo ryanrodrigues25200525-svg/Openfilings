@@ -86,7 +86,7 @@ carries the reproductions.
 
 **Verification gaps**
 
-- [ ] [#7](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/7) — the Sweden and Singapore regression guards cannot fire, because both filings derive a total and the identity check correctly refuses a circular comparison
+- [x] [#7](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/7) — the Sweden and Singapore regression guards cannot fire, because both filings derive a total and the identity check correctly refuses a circular comparison
 - [ ] [#8](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/8) — pinned accuracy benchmarks cover 2 issuers across 25 markets. A value can reconcile perfectly and still be wrong
 - [x] [#9](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/9) — the multi-issuer probe that found this session's defects was a throwaway script, so the next per-issuer defect will be equally invisible
 - [ ] [#11](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/11) — South Korea has never run against a live DART key; mocked tests only
