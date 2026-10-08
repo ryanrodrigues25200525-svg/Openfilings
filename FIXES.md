@@ -113,11 +113,13 @@ primary statements' totals and little else.
   others on `other_jurisdictions`. Per-jurisdiction IDs still resolve and
   each lists only its own market's filings; only the search layer merges.
 
-- [ ] **[#14](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/14) Some ESEF issuers return a years-old "latest" filing.**
+- [x] **[#14](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/14) Some ESEF issuers return a years-old "latest" filing.**
   *Fix:* first establish which explanation applies — for one affected issuer,
   compare what filings.xbrl.org returns for the LEI *without* the country
   filter against what the adapter returns *with* it. That single comparison
   separates an upstream gap from a discovery bug, and only the second is ours.
+  *Fixed:* it was a discovery bug — same-day filings broke ties on raw filing
+  id. `_filing_sort_key` now prefers the newer reporting period before the id.
 
 - [x] **Validation asserted our own arithmetic against source facts.**
   `to_finvariant_statements` mapped every value, including derived totals
@@ -195,10 +197,13 @@ primary statements' totals and little else.
   per-source. Any change here needs near-miss tests, not just happy paths —
   loosening the matcher risks false positives across thousands of issuers.
 
-- [ ] **[#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15) Cached facts and a running MCP server both survive a fix.**
+- [x] **[#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15) Cached facts and a running MCP server both survive a fix.**
   *Fix:* stamp cached financials with an extractor version and treat a
   mismatch as a cache miss. That makes corrections propagate on their own and
   subsumes the alternatives (a cache-invalidation command, changelog notes).
+  *Fixed:* `FINANCIALS_EXTRACTOR_VERSION` stamps `filing_financials` rows;
+  a mismatch (or NULL on pre-versioning rows) reads as a miss and the filing
+  is re-extracted; `put_historical_facts` replaces per filing on backfill.
 
 - [x] **The README documented 12 of 22 MCP tools.** Missing:
   `data_quality_report`, `financials_query`, `historical_facts_query`,
@@ -213,12 +218,13 @@ primary statements' totals and little else.
   doc generation - and verified it actually fails when a tool is removed
   from the docs, not just that it happens to pass today.
 
-- [ ] **[#13](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/13) Every Dependabot PR fails CI because `uv.lock` is not regenerated.**
+- [x] **[#13](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/13) Every Dependabot PR fails CI because `uv.lock` is not regenerated.**
   *Fix:* add a lockfile-refresh step so the PRs are testable, or restrict
   Dependabot to security updates and bump by hand with `uv lock --upgrade`.
   Do not drop `--locked` from CI — it is what makes the build reproducible.
   Separately, comment the deliberate `mcp<2` pin in `pyproject.toml` so it is
   not "helpfully" widened later.
+  *Fixed:* `.github/workflows/dependabot-lock.yml` refreshes the lockfile.
 
 ---
 
@@ -270,8 +276,8 @@ repository, and ships less metadata than a PyPI page needs.
   raises `ConfigurationError` instead of operating on data it may not
   understand. No migration engine was built, since no actual incompatible
   change exists yet to migrate - this is groundwork for the next one, not a
-  framework built ahead of need. Still pairs with the extractor-version
-  stamp in [#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15), which is separate and not done.
+  framework built ahead of need. Pairs with the extractor-version
+  stamp in [#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15), which is now done (see P4).
 
 - [x] **Retry backoff has no jitter.** `_common.py` backed off on a fixed
   `0.25 · 2^n` / `0.5 · 2^n` schedule. A `source="all"` search fans out to
