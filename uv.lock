@@ -635,7 +635,7 @@ dev = [
 requires-dist = [
     { name = "finvariant", specifier = ">=0.1,<0.2" },
     { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "markdownify", specifier = ">=1.2,<2" },
+    { name = "markdownify", specifier = ">=1.2.3,<2" },
     { name = "mcp", specifier = ">=1.27,<2" },
     { name = "pandas", marker = "extra == 'dataframe'", specifier = ">=2.2,<4" },
     { name = "pdf-inspector", marker = "extra == 'pdf-detect'", specifier = ">=0.2,<0.3" },
