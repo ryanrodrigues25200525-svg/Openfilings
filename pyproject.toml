@@ -35,6 +35,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
+  "cryptography>=50",
   "finvariant>=0.1,<0.2",
   "httpx>=0.28,<1",
   "markdownify>=1.2,<2",
@@ -42,6 +43,7 @@ dependencies = [
   # setup (see issue #13). Do not widen to <3 on Dependabot's suggestion.
   "mcp>=1.27,<2",
   "pydantic>=2.10,<3",
+  "pyjwt>=2.14",
   "pymupdf4llm>=1.28,<2",
   "rapidfuzz>=3.9,<4",
   "typer>=0.15,<1",
