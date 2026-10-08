@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
@@ -115,7 +116,62 @@ class Company(DomainModel):
     status: str | None = None
     company_type: str | None = None
     address: str | None = None
+    # Other jurisdictions where the same legal entity (same LEI) also files.
+    # Populated by search-result deduplication (issue #12): one LEI can
+    # produce one company ID per ESEF jurisdiction, so a bare-query search
+    # collapses them to a single record and lists the rest here. Filing
+    # discovery is unaffected - every per-jurisdiction ID still resolves
+    # and lists only its own market's filings.
+    other_jurisdictions: tuple[str, ...] = ()
     source_url: str
+
+
+def deduplicate_companies_by_lei(companies: Sequence[Company]) -> list[Company]:
+    """Collapse same-LEI company records to one record per legal entity.
+
+    Distinct LEIs never merge (similar names stay distinct). The surviving
+    record is chosen deterministically - alphabetically first by
+    (market, country code, id) - so a bare query for a dual-jurisdiction
+    issuer always binds the same jurisdiction instead of depending on
+    result order. The dropped jurisdictions are listed on
+    ``other_jurisdictions``; records without an LEI pass through untouched.
+    """
+
+    result: list[Company] = []
+    lei_index: dict[str, int] = {}
+    for company in companies:
+        lei = (company.lei or "").strip().upper()
+        if not lei:
+            result.append(company)
+            continue
+        index = lei_index.get(lei)
+        if index is None:
+            lei_index[lei] = len(result)
+            result.append(company)
+            continue
+        preferred, dropped = sorted(
+            (result[index], company),
+            key=lambda item: (item.market, item.country_code, item.id),
+        )
+        jurisdictions = tuple(
+            sorted(
+                {
+                    *preferred.other_jurisdictions,
+                    dropped.country_code,
+                    *dropped.other_jurisdictions,
+                }
+                - {preferred.country_code}
+            )
+        )
+        sources = tuple(dict.fromkeys((*preferred.sources, *dropped.sources)))
+        result[index] = preferred.model_copy(
+            update={
+                "sources": sources,
+                "lei": preferred.lei or dropped.lei,
+                "other_jurisdictions": jurisdictions,
+            }
+        )
+    return result
 
 
 class Filing(DomainModel):

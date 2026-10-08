@@ -2,6 +2,32 @@
 
 All notable changes to OpenFilings are documented in this file.
 
+## Unreleased
+
+### Added
+
+- Added a monthly multi-issuer probe (`openfilings.probe`, scheduled in
+  `.github/workflows/live-probe.yml`): a bounded, reviewed list of 2-3
+  issuers per keyless market - none of them the smoke issuer - that
+  resolves each company, lists its filings, extracts one filing, and
+  reports verified / unverifiable / failed per issuer instead of
+  pass/fail, so "unverifiable" stays visible rather than reading as
+  success. Closes #9.
+
+### Fixed
+
+- Search results now deduplicate same-LEI company records to one record per
+  legal entity (issue #12, decided option 1): one LEI filed in two ESEF
+  jurisdictions previously produced two company IDs, and a bare query's
+  ranking silently decided the jurisdiction (the "ESEF Portugal" smoke
+  case was exercising Spain). The surviving record is chosen
+  deterministically - alphabetically first by (market, country code,
+  id) - and lists the other jurisdictions on the record's new
+  `other_jurisdictions` field (also exposed in `company_summary`). Both
+  per-jurisdiction IDs still resolve and each lists only its own
+  market's filings; only the search-result layer merges. Distinct LEIs
+  (e.g. the two Telenors) stay distinct. Closes #12.
+
 ## 0.22.0 - 2026-08-01
 
 ### Added

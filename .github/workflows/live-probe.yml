@@ -1,0 +1,35 @@
+name: Monthly multi-issuer probe
+
+on:
+  schedule:
+    # First Monday of the month, off-hours UTC: slower than the weekly smoke
+    # and monthly is enough (issue #9).
+    - cron: "37 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monthly-multi-issuer-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Multi-issuer market coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v7.0.0
+        with:
+          version: "0.11.30"
+          python-version: "3.13"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --all-extras
+      - name: Run monthly multi-issuer probe
+        env:
+          OPENFILINGS_DATA_DIR: ${{ runner.temp }}/openfilings-probe
+        run: uv run python -m openfilings.probe

@@ -62,6 +62,7 @@ pdf-detect = ["pdf-inspector>=0.2,<0.3"]
 [project.scripts]
 openfilings = "openfilings.cli:app"
 openfilings-smoke = "openfilings.smoke:main"
+openfilings-probe = "openfilings.probe:main"
 
 [dependency-groups]
 dev = [

@@ -116,6 +116,9 @@ def company_summary(company: Company) -> dict[str, Any]:
             "sources": list(company.sources),
             "status": company.status,
             "source_url": company.source_url,
+            # Only present after same-LEI search dedup (issue #12): the
+            # jurisdictions that also carry this legal entity's filings.
+            "other_jurisdictions": list(company.other_jurisdictions) or None,
         }
     )
 

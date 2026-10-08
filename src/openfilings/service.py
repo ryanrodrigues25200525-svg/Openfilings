@@ -64,6 +64,7 @@ from openfilings.models import (
     ReportingPeriod,
     SourceSelection,
     StatementType,
+    deduplicate_companies_by_lei,
 )
 from openfilings.ownership import extract_nsm_major_holder
 from openfilings.resources import (
@@ -316,8 +317,12 @@ class OpenFilingsService:
             raise ConfigurationError(f"The {selection} source is not configured.")
 
         results = await self._gather_available(calls)
-        companies = self._merge_companies(
-            [company for result in results for company in result]
+        # Issue #12, option 1: one LEI can produce one company ID per ESEF
+        # jurisdiction. Collapse same-LEI records here - at the search-result
+        # layer only - so per-market filing discovery (list_filings routes
+        # each company ID to its own jurisdiction) is untouched.
+        companies = deduplicate_companies_by_lei(
+            self._merge_companies([company for result in results for company in result])
         )[:limit]
         self._cache.put_companies(companies)
         return companies

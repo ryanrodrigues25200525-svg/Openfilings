@@ -104,6 +104,7 @@ def test_ci_workflows_enforce_tests_security_and_keyless_live_checks() -> None:
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     security = (ROOT / ".github/workflows/security.yml").read_text(encoding="utf-8")
     live = (ROOT / ".github/workflows/live-smoke.yml").read_text(encoding="utf-8")
+    probe = (ROOT / ".github/workflows/live-probe.yml").read_text(encoding="utf-8")
 
     assert "uv sync --locked --all-extras --dev" in ci
     assert "uv run ruff check ." in ci
@@ -114,6 +115,11 @@ def test_ci_workflows_enforce_tests_security_and_keyless_live_checks() -> None:
     assert "pip-audit" in security
     assert "openfilings.smoke" in live
     assert "EDINET_API_KEY" not in live
+    # The monthly multi-issuer probe (issue #9) is a separate scheduled job:
+    # slower than smoke, monthly cadence, never gated on secrets.
+    assert "openfilings.probe" in probe
+    assert "EDINET_API_KEY" not in probe
+    assert "DART_API_KEY" not in probe
 
 
 class _FakeFinancials:
