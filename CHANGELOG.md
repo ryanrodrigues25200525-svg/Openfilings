@@ -14,6 +14,10 @@ All notable changes to OpenFilings are documented in this file.
   pass/fail, so "unverifiable" stays visible rather than reading as
   success. Closes #9.
 
+- Added a lockfile-refresh workflow (`.github/workflows/dependabot-lock.yml`)
+  so Dependabot PRs regenerate `uv.lock` and are testable instead of always
+  failing CI. Closes #13.
+
 ### Fixed
 
 - Search results now deduplicate same-LEI company records to one record per
@@ -27,6 +31,17 @@ All notable changes to OpenFilings are documented in this file.
   per-jurisdiction IDs still resolve and each lists only its own
   market's filings; only the search-result layer merges. Distinct LEIs
   (e.g. the two Telenors) stay distinct. Closes #12.
+
+- Same-day filings (e.g. ESEF re-filings sharing `date_added`) no longer
+  break ties on the raw filing id, which could rank a years-old filing as
+  "latest" (Intesa's 2021 re-filing outranked its 2022 filing). The sort key
+  now prefers the newer reporting period before falling back to the id.
+  Closes #14.
+
+- Cached financials are stamped with `FINANCIALS_EXTRACTOR_VERSION` and a
+  version mismatch (or a NULL on pre-versioning rows) reads as a cache miss,
+  so corrections propagate via re-extraction instead of serving stale
+  numbers; historical-fact backfill replaces facts per filing. Closes #15.
 
 ## 0.22.0 - 2026-08-01
 

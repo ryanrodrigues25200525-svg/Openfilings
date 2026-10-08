@@ -103,17 +103,22 @@ primary statements' totals and little else.
   MCP envelope (a `partial: true` plus the failing sources), so a caller can
   distinguish "not found" from "not checked."
 
-- [ ] **[#12](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/12) One LEI can produce two company IDs across jurisdictions.**
+- [x] **[#12](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/12) One LEI can produce two company IDs across jurisdictions.**
   *Fix:* decide deliberately between deduplicating search results by LEI
   (preferring the home country), making the LEI the company ID and moving
   country onto the filing, or documenting the duplication as intended. It is
   currently true by accident.
+  *Fixed:* decided option 1 — search results collapse same-LEI records to one
+  (deterministic survivor, `other_jurisdictions` listed on the record);
+  per-jurisdiction IDs still resolve and list only their own filings.
 
-- [ ] **[#14](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/14) Some ESEF issuers return a years-old "latest" filing.**
+- [x] **[#14](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/14) Some ESEF issuers return a years-old "latest" filing.**
   *Fix:* first establish which explanation applies — for one affected issuer,
   compare what filings.xbrl.org returns for the LEI *without* the country
   filter against what the adapter returns *with* it. That single comparison
   separates an upstream gap from a discovery bug, and only the second is ours.
+  *Fixed:* it was a discovery bug — same-day filings broke ties on raw filing
+  id. `_filing_sort_key` now prefers the newer reporting period before the id.
 
 ---
 
@@ -140,11 +145,12 @@ primary statements' totals and little else.
   differences exist (Volvo books provisions separately), so observe the
   distribution before enforcing.
 
-- [ ] **[#9](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/9) The multi-issuer probe is not repeatable.**
+- [x] **[#9](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/9) The multi-issuer probe is not repeatable.**
   *Fix:* commit a bounded check — 2–3 reviewed issuers per market, none of
   them the smoke issuer — reporting verified/unverifiable/failed rather than
   pass/fail. Schedule monthly, not weekly. Keep it polite: these are free
   public endpoints.
+  *Fixed:* `openfilings.probe` + `.github/workflows/live-probe.yml` (monthly).
 
 - [ ] **[#11](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/11) South Korea has never run against a live DART key.**
   *Fix:* register a free key, resolve a KOSPI issuer, list filings, extract
@@ -164,10 +170,13 @@ primary statements' totals and little else.
   per-source. Any change here needs near-miss tests, not just happy paths —
   loosening the matcher risks false positives across thousands of issuers.
 
-- [ ] **[#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15) Cached facts and a running MCP server both survive a fix.**
+- [x] **[#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15) Cached facts and a running MCP server both survive a fix.**
   *Fix:* stamp cached financials with an extractor version and treat a
   mismatch as a cache miss. That makes corrections propagate on their own and
   subsumes the alternatives (a cache-invalidation command, changelog notes).
+  *Fixed:* `FINANCIALS_EXTRACTOR_VERSION` stamps `filing_financials` rows;
+  a mismatch (or NULL on pre-versioning rows) reads as a miss and the filing
+  is re-extracted; `put_historical_facts` replaces per filing on backfill.
 
 - [x] **The README documented 12 of 22 MCP tools.** Missing:
   `data_quality_report`, `financials_query`, `historical_facts_query`,
@@ -182,12 +191,13 @@ primary statements' totals and little else.
   doc generation - and verified it actually fails when a tool is removed
   from the docs, not just that it happens to pass today.
 
-- [ ] **[#13](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/13) Every Dependabot PR fails CI because `uv.lock` is not regenerated.**
+- [x] **[#13](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/13) Every Dependabot PR fails CI because `uv.lock` is not regenerated.**
   *Fix:* add a lockfile-refresh step so the PRs are testable, or restrict
   Dependabot to security updates and bump by hand with `uv lock --upgrade`.
   Do not drop `--locked` from CI — it is what makes the build reproducible.
   Separately, comment the deliberate `mcp<2` pin in `pyproject.toml` so it is
   not "helpfully" widened later.
+  *Fixed:* `.github/workflows/dependabot-lock.yml` refreshes the lockfile.
 
 ---
 
@@ -239,8 +249,8 @@ repository, and ships less metadata than a PyPI page needs.
   raises `ConfigurationError` instead of operating on data it may not
   understand. No migration engine was built, since no actual incompatible
   change exists yet to migrate - this is groundwork for the next one, not a
-  framework built ahead of need. Still pairs with the extractor-version
-  stamp in [#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15), which is separate and not done.
+  framework built ahead of need. Pairs with the extractor-version
+  stamp in [#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15), which is now done (see P4).
 
 - [x] **Retry backoff has no jitter.** `_common.py` backed off on a fixed
   `0.25 · 2^n` / `0.5 · 2^n` schedule. A `source="all"` search fans out to
