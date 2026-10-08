@@ -737,8 +737,10 @@ Not scoped to one company:
 ```
 
 The server is long-running, so restart it after upgrading — a running process
-keeps serving the code it started with. Cached facts also survive an upgrade;
-pass `refresh: true` to re-extract a filing whose figures a fix should change.
+keeps serving the code it started with. Cached financials are stamped with the
+extractor version, so after an extraction fix they are re-extracted on next
+read (re-run the historical backfill to refresh stored historical facts, or
+pass `refresh: true` to force a single filing).
 
 ## Production checks
 

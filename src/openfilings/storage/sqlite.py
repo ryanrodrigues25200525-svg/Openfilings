@@ -12,6 +12,7 @@ from pathlib import Path
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import ConfigurationError
 from openfilings.models import (
+    FINANCIALS_EXTRACTOR_VERSION,
     SUPPORTED_SOURCE_NAMES,
     CacheStats,
     Company,
@@ -313,27 +314,33 @@ class SQLiteCache:
             self._connection.execute(
                 """
                 INSERT INTO filing_financials (
-                    filing_id, payload_zlib, sha256, extracted_at
-                ) VALUES (?, ?, ?, ?)
+                    filing_id, payload_zlib, sha256, extracted_at,
+                    extractor_version
+                ) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(filing_id) DO UPDATE SET
                     payload_zlib = excluded.payload_zlib,
                     sha256 = excluded.sha256,
-                    extracted_at = excluded.extracted_at
+                    extracted_at = excluded.extracted_at,
+                    extractor_version = excluded.extractor_version
                 """,
                 (
                     financials.filing_id,
                     compressed,
                     financials.sha256,
                     financials.extracted_at.isoformat(),
+                    FINANCIALS_EXTRACTOR_VERSION,
                 ),
             )
 
     def get_financials(self, filing_id: str) -> FilingFinancials | None:
         row = self._connection.execute(
-            "SELECT payload_zlib FROM filing_financials WHERE filing_id = ?",
+            "SELECT payload_zlib, extractor_version FROM filing_financials"
+            " WHERE filing_id = ?",
             (filing_id,),
         ).fetchone()
-        if row is None:
+        if row is None or row[1] != FINANCIALS_EXTRACTOR_VERSION:
+            # Missing (pre-versioning rows read back as NULL) or stale: a
+            # re-extraction is required, so this is a miss, not a hit.
             return None
         financials = FilingFinancials.model_validate_json(
             zlib.decompress(row[0]).decode("utf-8")
@@ -341,8 +348,13 @@ class SQLiteCache:
         return financials.model_copy(update={"from_cache": True})
 
     def put_historical_facts(self, filing: Filing, financials: FilingFinancials) -> int:
-        """Persist immutable filing-scoped facts, including restated periods."""
+        """Persist filing-scoped facts, including restated periods.
 
+        Rows are replaced per filing (not merely inserted): after an extractor
+        fix, re-running the backfill re-extracts the filing (its cached
+        financials are now a version miss) and the corrected facts replace the
+        stale ones instead of competing with them in the restated views.
+        """
         reported_at = (
             filing.published_at
             or datetime.combine(filing.filing_date, datetime.min.time(), tzinfo=UTC)
@@ -372,6 +384,10 @@ class SQLiteCache:
             for value in item.values
         ]
         with self._connection:
+            self._connection.execute(
+                "DELETE FROM historical_facts WHERE filing_id = ?",
+                (filing.id,),
+            )
             self._connection.executemany(
                 """
                 INSERT INTO historical_facts (
@@ -645,7 +661,8 @@ class SQLiteCache:
                     filing_id TEXT PRIMARY KEY,
                     payload_zlib BLOB NOT NULL,
                     sha256 TEXT NOT NULL,
-                    extracted_at TEXT NOT NULL
+                    extracted_at TEXT NOT NULL,
+                    extractor_version INTEGER
                 );
 
                 CREATE INDEX IF NOT EXISTS filing_financials_sha256_idx
@@ -676,6 +693,16 @@ class SQLiteCache:
             if "quality_json" not in columns:
                 self._connection.execute(
                     "ALTER TABLE filing_content ADD COLUMN quality_json TEXT"
+                )
+            financials_columns = {
+                row[1]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(filing_financials)"
+                ).fetchall()
+            }
+            if "extractor_version" not in financials_columns:
+                self._connection.execute(
+                    "ALTER TABLE filing_financials ADD COLUMN extractor_version INTEGER"
                 )
             self._remove_unsupported_source_records()
 

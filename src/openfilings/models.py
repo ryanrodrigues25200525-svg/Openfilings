@@ -61,6 +61,11 @@ SUPPORTED_SOURCE_NAMES = frozenset(
         "kap",
     }
 )
+# Bump whenever financial-statement extraction logic changes (XBRL mappings,
+# structured-source extractors, PDF statement parsing). The SQLite cache
+# stamps stored financials with this version and treats a mismatch as a
+# cache miss, so corrections propagate without manual re-extraction.
+FINANCIALS_EXTRACTOR_VERSION = 1
 MarketCode = Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
 CountryCode = Annotated[str, Field(pattern=r"^[A-Z]{2}$")]
 QualityStatus = Literal["good", "degraded", "unusable"]

@@ -313,6 +313,72 @@ async def test_get_company_facts_scans_past_recent_nonfinancial_disclosures(
 
 
 @pytest.mark.asyncio
+async def test_list_filings_prefers_newer_period_on_same_filing_date(
+    tmp_path,
+) -> None:
+    """Issue #14: Intesa's 2021 re-filing (it_esef_7112) outranked its 2022
+    filing (it_esef_6868) because both share filing_date 2023-05-30 and the
+    tie broke on raw filing id. Same-day filings must break ties on period."""
+
+    from openfilings.adapters.esef import ITALY, EsefClient
+
+    lei = "2W8N8UU78PMDQKZENC08"
+    old_id, new_id = "7112", "6868"
+    old_period, new_period = "2021-12-31", "2022-12-31"
+
+    def payload(filing_id: str, period_end: str) -> dict[str, object]:
+        return {
+            "type": "filing",
+            "id": filing_id,
+            "attributes": {
+                "country": "IT",
+                "period_end": period_end,
+                "date_added": "2023-05-30 18:13:12.336496",
+                "fxo_id": f"{lei}-{period_end}-ESEF-IT-0",
+                "report_url": f"/{lei}/{period_end}/ESEF/IT/0/report.xhtml",
+                "error_count": 0,
+                "warning_count": 1,
+            },
+            "relationships": {"entity": {"data": {"type": "entity", "id": "3377"}}},
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Upstream returns the newer filing first; the service must keep it
+        # first even though its numeric id is smaller.
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    payload(new_id, new_period),
+                    payload(old_id, old_period),
+                ],
+                "included": [
+                    {
+                        "type": "entity",
+                        "id": "3377",
+                        "attributes": {
+                            "name": "INTESA SANPAOLO SPA",
+                            "identifier": lei,
+                        },
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        esef = EsefClient(ITALY, client=http)
+        cache = SQLiteCache(tmp_path / "cache.sqlite3")
+        service = OpenFilingsService(cache, esef_sources=(esef,))
+        filings = await service.list_filings(f"it_lei_{lei}")
+        cache.close()
+
+    assert [filing.id for filing in filings] == [
+        f"it_esef_{new_id}",
+        f"it_esef_{old_id}",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_major_holders_pipeline_lists_and_reverse_searches(tmp_path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":

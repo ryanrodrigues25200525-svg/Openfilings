@@ -54,7 +54,11 @@ class Filings(Sequence[Filing]):
             raise ValueError("count must be at least one")
         ordered = sorted(
             self._filings,
-            key=lambda filing: (filing.published_at or filing.filing_date, filing.id),
+            key=lambda filing: (
+                filing.published_at or filing.filing_date,
+                filing.period_end or date.min,
+                filing.id,
+            ),
             reverse=True,
         )
         selected = Filings(ordered[:count])

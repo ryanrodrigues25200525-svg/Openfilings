@@ -143,6 +143,50 @@ def test_historical_facts_preserve_restated_and_as_of_views(tmp_path) -> None:
     ]
 
 
+def test_stale_extractor_version_is_a_financials_cache_miss(tmp_path) -> None:
+    """Issue #15: cached financials survive an extractor fix. Rows stamped
+    with an older extractor version (or none, for pre-versioning caches)
+    must read as a miss so the filing is re-extracted."""
+
+    from openfilings.models import FINANCIALS_EXTRACTOR_VERSION
+
+    cache = SQLiteCache(tmp_path / "cache.sqlite3")
+    financials = FilingFinancials(
+        filing_id="versioned",
+        company_id="c1",
+        source_url="https://example.test/versioned",
+        statements=(),
+        fact_count=0,
+        sha256="1" * 64,
+    )
+
+    cache.put_financials(financials)
+    assert cache.get_financials("versioned") is not None
+
+    connection = sqlite3.connect(tmp_path / "cache.sqlite3")
+    with connection:
+        connection.execute(
+            "UPDATE filing_financials SET extractor_version = ? WHERE filing_id = ?",
+            (FINANCIALS_EXTRACTOR_VERSION - 1, "versioned"),
+        )
+    connection.close()
+    assert cache.get_financials("versioned") is None
+
+    with sqlite3.connect(tmp_path / "cache.sqlite3") as migrated:
+        migrated.execute(
+            "UPDATE filing_financials SET extractor_version = NULL WHERE filing_id = ?",
+            ("versioned",),
+        )
+    assert cache.get_financials("versioned") is None
+
+    cache.put_financials(financials)
+    restored = cache.get_financials("versioned")
+    cache.close()
+
+    assert restored is not None
+    assert restored.from_cache is True
+
+
 def test_existing_cache_is_migrated_with_quality_metadata(tmp_path) -> None:
     path = tmp_path / "legacy.sqlite3"
     connection = sqlite3.connect(path)

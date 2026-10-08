@@ -361,13 +361,7 @@ class OpenFilingsService:
         filings = self._deduplicate_filings(
             [filing for result in results for filing in result]
         )
-        filings.sort(
-            key=lambda filing: (
-                filing.published_at or self._date_sort_value(filing),
-                filing.id,
-            ),
-            reverse=True,
-        )
+        filings.sort(key=self._filing_sort_key, reverse=True)
         return filings[:limit]
 
     async def company(
@@ -564,13 +558,7 @@ class OpenFilingsService:
             *(filing for result in results for filing in result),
         ]
         filings = self._deduplicate_filings(combined)
-        filings.sort(
-            key=lambda filing: (
-                filing.published_at or self._date_sort_value(filing),
-                filing.id,
-            ),
-            reverse=True,
-        )
+        filings.sort(key=self._filing_sort_key, reverse=True)
         filings = filings[:limit]
         self._cache.put_filings(filings)
         return filings
@@ -1694,6 +1682,18 @@ class OpenFilingsService:
     @staticmethod
     def _normalize_text(value: str) -> str:
         return " ".join(re.sub(r"[^a-z0-9]+", " ", value.casefold()).split())
+
+    @classmethod
+    def _filing_sort_key(cls, filing: Filing) -> tuple[datetime, date, str]:
+        # Same-day filings (e.g. ESEF re-filings sharing date_added) broke ties
+        # on raw filing id, which can predate the newer period (issue #14:
+        # it_esef_7112 from 2021 outranked it_esef_6868 from 2022). Prefer the
+        # newer reporting period before falling back to the id.
+        return (
+            filing.published_at or cls._date_sort_value(filing),
+            filing.period_end or date.min,
+            filing.id,
+        )
 
     @staticmethod
     def _date_sort_value(filing: Filing) -> datetime:
