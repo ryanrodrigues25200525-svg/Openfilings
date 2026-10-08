@@ -43,6 +43,16 @@ All notable changes to OpenFilings are documented in this file.
   so corrections propagate via re-extraction instead of serving stale
   numbers; historical-fact backfill replaces facts per filing. Closes #15.
 
+- Company search tolerates extra query tokens via token-subset scoring
+  ("Ford Otosan" resolves as well as "Ford"), with a near-miss guard so
+  loosened matching cannot sweep a 2,000-issuer registry. True aliases with
+  no token overlap ("PKO") still need per-source alias data. Part 1 of #10.
+
+- An FCA filing is never labelled PEN: the "S/ 000" scale marker that
+  matches the bare Peruvian-sol marker falls through to the source default
+  for `fca_nsm`, while SMV filings with the same marker still report PEN.
+  Currency half of #6.
+
 ## 0.22.0 - 2026-08-01
 
 ### Added
