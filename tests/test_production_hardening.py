@@ -110,7 +110,7 @@ def test_ci_workflows_enforce_tests_security_and_keyless_live_checks() -> None:
     assert "uv run ruff format --check ." in ci
     assert "uv run pytest" in ci
     assert "uv build" in ci
-    assert "codeql-action/analyze@f52b05f4acaaa234e44466e66d29050e135ea9ef" in security
+    assert "codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa" in security
     assert "pip-audit" in security
     assert "openfilings.smoke" in live
     assert "EDINET_API_KEY" not in live
