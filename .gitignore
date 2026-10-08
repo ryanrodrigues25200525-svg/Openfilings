@@ -2,6 +2,7 @@
 .openfilings/
 .DS_Store
 .claude/worktrees/
+.worktrees/
 .pytest_cache/
 .ruff_cache/
 .venv/
