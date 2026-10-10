@@ -213,9 +213,7 @@ def test_pinned_volvo_and_keppel_facts_match_source_reviewed_figures() -> None:
     and a statement set carrying those figures must satisfy the checker."""
 
     by_label = {benchmark.label: benchmark for benchmark in ACCURACY_BENCHMARKS}
-    volvo = next(
-        benchmark for label, benchmark in by_label.items() if "Volvo" in label
-    )
+    volvo = next(benchmark for label, benchmark in by_label.items() if "Volvo" in label)
     keppel = next(
         benchmark for label, benchmark in by_label.items() if "Keppel" in label
     )
@@ -223,15 +221,39 @@ def test_pinned_volvo_and_keppel_facts_match_source_reviewed_figures() -> None:
         (fact.code, fact.period_end, fact.value, fact.unit, fact.concept)
         for fact in volvo.facts
     } == {
-        ("total_assets", date(2024, 12, 31), Decimal("714564000000"), "iso4217:SEK", "ifrs-full:Assets"),
-        ("total_equity", date(2024, 12, 31), Decimal("197361000000"), "iso4217:SEK", "ifrs-full:Equity"),
+        (
+            "total_assets",
+            date(2024, 12, 31),
+            Decimal("714564000000"),
+            "iso4217:SEK",
+            "ifrs-full:Assets",
+        ),
+        (
+            "total_equity",
+            date(2024, 12, 31),
+            Decimal("197361000000"),
+            "iso4217:SEK",
+            "ifrs-full:Equity",
+        ),
     }
     assert {
         (fact.code, fact.period_end, fact.value, fact.unit, fact.concept)
         for fact in keppel.facts
     } == {
-        ("total_equity", date(2025, 12, 31), Decimal("11186180000"), "SGD", "pdf-label:net-assets"),
-        ("noncurrent_liabilities", date(2025, 12, 31), Decimal("10122923000"), "SGD", "pdf-label:non-current-liabilities"),
+        (
+            "total_equity",
+            date(2025, 12, 31),
+            Decimal("11186180000"),
+            "SGD",
+            "pdf-label:net-assets",
+        ),
+        (
+            "noncurrent_liabilities",
+            date(2025, 12, 31),
+            Decimal("10122923000"),
+            "SGD",
+            "pdf-label:non-current-liabilities",
+        ),
     }
 
     financials = _pinned_facts_financials()
@@ -244,9 +266,7 @@ def test_pinned_facts_checker_rejects_a_wrong_figure() -> None:
     values rather than merely existing."""
 
     by_label = {benchmark.label: benchmark for benchmark in ACCURACY_BENCHMARKS}
-    volvo = next(
-        benchmark for label, benchmark in by_label.items() if "Volvo" in label
-    )
+    volvo = next(benchmark for label, benchmark in by_label.items() if "Volvo" in label)
     financials = _pinned_facts_financials()
     statements = financials.statements[0].line_items
     perturbed = tuple(
@@ -263,9 +283,7 @@ def test_pinned_facts_checker_rejects_a_wrong_figure() -> None:
     wrong = financials.model_copy(
         update={
             "statements": (
-                financials.statements[0].model_copy(
-                    update={"line_items": perturbed}
-                ),
+                financials.statements[0].model_copy(update={"line_items": perturbed}),
             )
         }
     )
