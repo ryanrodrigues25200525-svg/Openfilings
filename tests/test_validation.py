@@ -10,7 +10,11 @@ from openfilings.models import (
     FinancialValue,
     ReportingPeriod,
 )
-from openfilings.validation import validate_financials, validation_view
+from openfilings.validation import (
+    to_finvariant_statements,
+    validate_financials,
+    validation_view,
+)
 
 
 def _instant(end_date: date) -> ReportingPeriod:
@@ -22,13 +26,25 @@ def _instant(end_date: date) -> ReportingPeriod:
     )
 
 
-def _line_item(code: str, name: str, values: dict[date, Decimal]) -> FinancialLineItem:
+def _line_item(
+    code: str,
+    name: str,
+    values: dict[date, Decimal],
+    *,
+    provenance: str = "tagged_xbrl",
+    dimensions: tuple[tuple[str, str], ...] = (),
+) -> FinancialLineItem:
     return FinancialLineItem(
         code=code,
         name=name,
         concept=f"pdf-label:{code}",
         values=tuple(
-            FinancialValue(period=_instant(end_date), value=value)
+            FinancialValue(
+                period=_instant(end_date),
+                value=value,
+                provenance=provenance,
+                dimensions=dimensions,
+            )
             for end_date, value in values.items()
         ),
     )
@@ -102,6 +118,71 @@ def test_validate_financials_flags_a_balance_sheet_that_does_not_tie_out() -> No
     )
     assert finding["expected"] == 13828839.0
     assert finding["actual"] == 37636229.0
+
+
+def test_validate_financials_ignores_values_the_filing_never_tagged() -> None:
+    """Derived values are our own arithmetic and dimension-qualified values are
+    a segment or class split the extraction fell back to - neither is a
+    consolidated source fact, and asserting one against source totals
+    manufactures failures a correct filing would then wear.
+
+    Volvo's 2024 ESEF report is the live case: total_liabilities derives as
+    assets - equity = 517,203m while the filing tags current 261,298m plus
+    non-current 211,216m liabilities, because the 44,689m held-for-sale
+    liability bucket (IFRS 5) sits in neither subtotal. Mapped, the derived
+    figure fails FOOT.bs.total_liabilities (517,203m vs 472,514m) on a
+    correct filing - and the dimension-qualified decoy below additionally
+    pins that a segment value cannot overwrite the consolidated one."""
+
+    end_date = date(2024, 12, 31)
+    financials = _financials(
+        FinancialStatement(
+            statement_type="balance_sheet",
+            title="Balance sheet",
+            line_items=(
+                _line_item(
+                    "total_assets", "Total assets", {end_date: Decimal("714564")}
+                ),
+                _line_item(
+                    "total_liabilities",
+                    "Total liabilities",
+                    {end_date: Decimal("517203")},
+                    provenance="derived",
+                ),
+                _line_item(
+                    "current_liabilities",
+                    "Current liabilities",
+                    {end_date: Decimal("261298")},
+                ),
+                _line_item(
+                    "noncurrent_liabilities",
+                    "Non-current liabilities",
+                    {end_date: Decimal("211216")},
+                ),
+                _line_item(
+                    "total_equity", "Total equity", {end_date: Decimal("197361")}
+                ),
+                _line_item(
+                    "total_liabilities",
+                    "Total liabilities",
+                    {end_date: Decimal("1")},
+                    dimensions=(("ifrs-full:SegmentsAxis", "ifrs-full:TruckMember"),),
+                ),
+            ),
+        )
+    )
+
+    view = validation_view(validate_financials(financials))
+    statements = to_finvariant_statements(financials)
+
+    assert view is not None
+    assert view["findings"] == []
+    assert view["ok"] is True
+    assert statements is not None
+    fields = statements.balance_sheet[end_date.isoformat()]
+    assert "total_liabilities" not in fields
+    assert fields["total_current_liabilities"] == 261298.0
+    assert fields["total_non_current_liabilities"] == 211216.0
 
 
 def test_validate_financials_ignores_income_statement_presentations() -> None:

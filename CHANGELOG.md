@@ -27,6 +27,83 @@ All notable changes to OpenFilings are documented in this file.
   per-jurisdiction IDs still resolve and each lists only its own
   market's filings; only the search-result layer merges. Distinct LEIs
   (e.g. the two Telenors) stay distinct. Closes #12.
+- Peru's SMV connector now accepts every RPJ shape observed live (CM0001
+  Volcan, CM0006 Cerro Verde, OE2305 Intercorp, three-letter codes such as
+  AFP002, and all-digit codes such as 023106 AENZA), not just the legacy
+  one-letter-plus-five-digits form (B30006). The strict pattern silently
+  dropped 134 of 274 issuer rows in one year's registry - roughly half of
+  Peru's listed market was unfindable. Company IDs, filing IDs and
+  document identifiers all carry the wider shape.
+- FCA NSM issuer search now matches on token boundaries instead of raw
+  substrings: "BP" previously matched "IVZ GBP Overnight Return SWAP£"
+  ("gbp" contains "bp"), and the swap entity won the API's raw hit order,
+  resolving BP to a listing with no filings. Query tokens now match whole
+  name tokens, and a token of three or more characters may also match as
+  a token prefix, so "Glaxo" still reaches "GLAXOSMITHKLINE PLC". Because
+  the API matches raw substrings and returns hits in publication-date
+  order, not relevance order - query "BP" returns a first page of 50 fund
+  names containing "gbp" before BP P.L.C. appears about 100 hits down,
+  confirmed live - search now pages through hits, bounded, until enough
+  candidates pass token matching.
+- FCA NSM issuer search now ranks candidates instead of trusting the
+  API's hit order: "HSBC" returned the HSBC FTSE 100 UCITS ETF (no
+  filings) before HSBC HOLDINGS PLC. The full candidate set is ranked and
+  deduplicated before the limit is applied; a pooled product (fund, ETF,
+  structured note) ranks below every other candidate, and then fewer
+  extra name tokens rank first, so live "HSBC" now leads with HSBC BANK
+  PLC and HSBC HOLDINGS PLC. Paging stops early only once enough
+  non-pooled candidates have matched, so a page of pure fund hits never
+  ends the search.
+- PDF statement label handling: "Total liabilities and equity" (the
+  balance-sheet grand total read from the liabilities side) is no longer
+  classified as `total_liabilities` - confirmed live on Barclays' annual
+  report, where it silently set total liabilities equal to total assets.
+  The fuzzy fallback now also rejects a label carrying more
+  three-character-plus words than its best alias: "Current tax
+  liabilities" scores 90.5 against "current liabilities", above the
+  threshold, and previously replaced the real current-liabilities
+  subtotal with the tax line's value (also confirmed live on Barclays'
+  annual report), while genuine misspellings keep an unchanged word count
+  ("Curent liabilities").
+- The smoke suite's balance-sheet identity now verifies the liability side
+  from source-tagged current + non-current liabilities when a filing tags
+  no usable total, instead of skipping as circular: live, 24 cases now
+  reconcile 18 identities outright (13 of 21 did when the matrix was last
+  written down), where the reconciling cases are real filings rather than
+  a derivation checking itself. The insurer presentation whose tagged
+  Liabilities subtotal excludes subordinated debt (Storebrand
+  Livsforsikring, confirmed live) now proves out too - the probe carries
+  it as a case - and where the two components leave a bucket out the run
+  reports a `GAP` line with the difference instead of "not_applicable",
+  counted separately in the closing tally so a green run still cannot read
+  as full coverage. The first such report is Volvo's 2024 ESEF filing,
+  which leaves out exactly the 44,689m held-for-sale liability bucket
+  (tagged separately as
+  `LiabilitiesIncludedInDisposalGroupsClassifiedAsHeldForSale`).
+- Financial-statement validation no longer asserts our own derived totals
+  or dimension-qualified fallbacks against source facts. A derived
+  `total_liabilities` (assets - equity) disagrees with the source
+  current/non-current subtotals whenever a filing leaves a bucket outside
+  them - exactly Volvo's case above, where the 517,203m derived total
+  against 472,514m of source subtotals reported a false accounting failure
+  on a correct filing via both the CLI and MCP. A dimension-qualified
+  value is the same class of error: the extraction only falls back to one
+  when the statement tagged no dimensionless fact, so it is a segment or
+  class split, not the consolidated total.
+- ESEF company search now ranks the whole upstream page instead of
+  slicing its first `limit` rows. filings.xbrl.org returns matches in
+  registry order, not relevance order, so "ING" resolved to N.V. Bever
+  Holding - an unrelated name that merely contains "ing" inside "Holding"
+  - ahead of ING GROEP N.V.; live "ING" now leads with ING BANK N.V. and
+  ING GROEP N.V. Ranking stays local on whatever the page returned, so
+  upstream relevance can no longer decide the answer.
+- SFC company search now collapses the registry's one-row-per-security
+  duplicates to one record per issuer and ranks equity-registered issuers
+  ahead of bond-only lines, labelling each ("active BVC equity issuer" /
+  "active BVC issuer (debt securities only)"). A name query previously
+  returned the same issuer once per species and could put a bond-only
+  bank ahead of one with listed equity, since upstream order is neither
+  alphabetical nor by relevance.
 
 ## 0.22.0 - 2026-08-01
 

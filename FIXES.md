@@ -103,17 +103,34 @@ primary statements' totals and little else.
   MCP envelope (a `partial: true` plus the failing sources), so a caller can
   distinguish "not found" from "not checked."
 
-- [ ] **[#12](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/12) One LEI can produce two company IDs across jurisdictions.**
+- [x] **[#12](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/12) One LEI can produce two company IDs across jurisdictions.**
   *Fix:* decide deliberately between deduplicating search results by LEI
   (preferring the home country), making the LEI the company ID and moving
   country onto the filing, or documenting the duplication as intended. It is
   currently true by accident.
+  *Fixed:* option one — search results deduplicate by LEI, keeping the
+  alphabetically first (market, country code, id) record and listing the
+  others on `other_jurisdictions`. Per-jurisdiction IDs still resolve and
+  each lists only its own market's filings; only the search layer merges.
 
 - [ ] **[#14](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/14) Some ESEF issuers return a years-old "latest" filing.**
   *Fix:* first establish which explanation applies — for one affected issuer,
   compare what filings.xbrl.org returns for the LEI *without* the country
   filter against what the adapter returns *with* it. That single comparison
   separates an upstream gap from a discovery bug, and only the second is ours.
+
+- [x] **Validation asserted our own arithmetic against source facts.**
+  `to_finvariant_statements` mapped every value, including derived totals
+  (`total_liabilities` = assets − equity) and dimension-qualified fallbacks
+  (a segment or class split, used when the statement tagged no dimensionless
+  fact). A derived total disagrees with the source current/non-current
+  subtotals whenever a filing leaves a bucket outside them — Volvo's 2024
+  ESEF report puts the 44,689m held-for-sale liability bucket in neither, so
+  the CLI and MCP reported a false accounting failure on a correct filing.
+  *Fixed:* neither reaches the mapping now; source facts alone drive the
+  checks. A derived-total filing loses only the checks that were circular by
+  construction (ASML: 6 checks before, 2 after, still passing), Volvo
+  validates clean, and the exact Volvo figures are pinned in a unit test.
 
 ---
 
@@ -129,7 +146,7 @@ primary statements' totals and little else.
   SFC CUIF, NSE XBRL, KAP viewer, BMV, SMV, PDF-heuristic), prioritising
   paths where a scaling or concept-mapping error would still reconcile.
 
-- [ ] **The 8 "extracted but unverifiable" markets prove nothing today.**
+- [x] **The 8 "extracted but unverifiable" markets prove nothing today.**
   Where a total is derived, the accounting identity is circular and correctly
   skipped.
   *Fix:* footing is **not** circular — `current + noncurrent liabilities`
@@ -137,14 +154,28 @@ primary statements' totals and little else.
   finvariant already has the rule (`FOOT.bs.total_liabilities`, which is what
   fired on Unilever). Report the footing outcome instead of a bare
   `not_applicable`. Report rather than fail at first: legitimate presentation
-  differences exist (Volvo books provisions separately), so observe the
-  distribution before enforcing.
+  differences exist (Volvo's held-for-sale liabilities sit in neither
+  subtotal), so observe the distribution before enforcing.
+  *Fixed:* the smoke identity falls back to the source-tagged current +
+  non-current components when no usable total is tagged, reporting
+  `held (total liabilities derived; components foot)` on agreement and a
+  `GAP` line carrying the difference on disagreement. The run's tally counts
+  gaps separately from unverifiable, so a green suite still cannot read as
+  full coverage. Live after the change: 24 cases, 18 reconcile the identity
+  outright, 1 reports a gap, 2 stay unverifiable (a UK NSM announcement with
+  no balance sheet, Singapore's Keppel), 3 are company-search only - against
+  13 of 21 reconciling when the old matrix was last written down. Enforcement
+  (failing a case on a gap) is deliberately still off.
 
-- [ ] **[#9](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/9) The multi-issuer probe is not repeatable.**
+- [x] **[#9](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/9) The multi-issuer probe is not repeatable.**
   *Fix:* commit a bounded check — 2–3 reviewed issuers per market, none of
   them the smoke issuer — reporting verified/unverifiable/failed rather than
   pass/fail. Schedule monthly, not weekly. Keep it polite: these are free
   public endpoints.
+  *Fixed:* `openfilings.probe` (2-3 reviewed issuers per keyless market, none
+  the smoke issuer) scheduled monthly in `.github/workflows/live-probe.yml`.
+  An all-failed run is reported as offline rather than as N independent
+  failures, and unverifiable outcomes do not fail the run.
 
 - [ ] **[#11](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/11) South Korea has never run against a live DART key.**
   *Fix:* register a free key, resolve a KOSPI issuer, list filings, extract

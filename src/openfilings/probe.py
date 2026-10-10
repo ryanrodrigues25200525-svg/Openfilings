@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from openfilings.service import OpenFilingsService
-from openfilings.smoke import _balance_sheet_identity
+from openfilings.smoke import _balance_sheet_identity, identity_holds
 
 ProbeOutcome = str  # "verified" | "unverifiable" | "failed"
 
@@ -85,7 +85,11 @@ PROBE_CASES = (
     ProbeCase("ESEF Finland (2)", "Fortum", "esef"),
     ProbeCase("ESEF Finland (3)", "Kone", "esef"),
     ProbeCase("ESEF Norway (2)", "Telenor ASA", "esef"),
-    ProbeCase("ESEF Norway (3)", "Orkla", "esef"),
+    # Chosen over a plain industrial: its insurer presentation tags
+    # Liabilities excluding subordinated debt (verified live 2024-10-10),
+    # the one shape that produced a false accounting failure before the
+    # identity and EQ fold understood it.
+    ProbeCase("ESEF Norway (3)", "Storebrand Livsforsikring", "esef"),
     ProbeCase("ESEF Poland (2)", "PKO Bank Polski", "esef"),
     ProbeCase("ESEF Poland (3)", "PZU", "esef"),
     ProbeCase("ESEF Belgium (2)", "Solvay", "esef"),
@@ -209,7 +213,7 @@ async def _run_case(service: Any, case: ProbeCase) -> ProbeResult:
             last_error = f"{type(exc).__name__}: {exc}"
             continue
         identity = _balance_sheet_identity(financials)
-        if identity == "held":
+        if identity_holds(identity):
             return ProbeResult(
                 case.label,
                 case.query,

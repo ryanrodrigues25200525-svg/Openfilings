@@ -26,6 +26,32 @@ ARTEFACT_BASE_URL = "https://data.fca.org.uk/artefacts/"
 
 _LEI_PATTERN = re.compile(r"^[A-Z0-9]{18}[0-9]{2}$")
 _MAX_DOCUMENT_BYTES = 100 * 1024 * 1024
+# The NSM search API matches a raw name substring, not tokens, and returns
+# hits in publication-date order, not relevance order: query "BP" returns a
+# first page of 50 fund names containing "gbp" ("IVZ GBP Overnight Return
+# SWAP£") before BP P.L.C. appears about 100 hits down (confirmed live).
+# Issuer search therefore pages through hits, bounded, until enough
+# candidates pass token matching.
+_ISSUER_PAGE_SIZE = 50
+_MAX_ISSUER_PAGES = 6
+# Pooled products (funds, ETFs, structured notes) share an issuer's brand
+# but are not the operating company a brand query is looking for, so they
+# rank below every candidate without such a token.
+_POOLED_PRODUCT_TOKENS = frozenset(
+    {
+        "etf",
+        "etfs",
+        "etc",
+        "etn",
+        "etp",
+        "ucits",
+        "fund",
+        "funds",
+        "icav",
+        "sicav",
+        "swap",
+    }
+)
 
 
 class FcaNsmClient:
@@ -64,30 +90,49 @@ class FcaNsmClient:
         if not clean_query:
             return []
 
-        hits = await self._search(
-            criteria=[
-                self._company_lei_criterion(company=clean_query),
-                {"name": "latest_flag", "value": "Y"},
-            ],
-            size=min(max(limit * 10, 50), 500),
-        )
+        criteria = [
+            self._company_lei_criterion(company=clean_query),
+            {"name": "latest_flag", "value": "Y"},
+        ]
 
-        issuers: list[Company] = []
-        seen: set[str] = set()
-        for hit in hits:
-            source = hit.get("_source", {})
-            candidates = self._issuer_pairs(source)
-            for name, lei in candidates:
-                if not self._matches_issuer(clean_query, name, lei):
-                    continue
-                key = lei or self._normalize_name(name)
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                issuers.append(self._company(name, lei))
-                if len(issuers) >= limit:
-                    return issuers
-        return issuers
+        # Rank every candidate before cutting to the limit: one entity can
+        # surface under several names across hits (the hit's own company
+        # field plus its related_org entries), and a broad query can match
+        # many distinct entities, so the API's raw hit order must not decide
+        # the winner. Paging is bounded and stops as soon as the requested
+        # number of candidates has matched.
+        by_key: dict[str, tuple[tuple[int, int], int, str, str | None]] = {}
+        order = 0
+        for page in range(_MAX_ISSUER_PAGES):
+            hits = await self._search(
+                criteria=criteria,
+                size=_ISSUER_PAGE_SIZE,
+                offset=page * _ISSUER_PAGE_SIZE,
+            )
+            if not hits:
+                break
+            for hit in hits:
+                source = hit.get("_source", {})
+                for name, lei in self._issuer_pairs(source):
+                    rank = self._issuer_match_rank(clean_query, name, lei)
+                    if rank is None:
+                        continue
+                    key = lei or self._normalize_name(name)
+                    if not key:
+                        continue
+                    order += 1
+                    current = by_key.get(key)
+                    if current is None or (rank, order) < (current[0], current[1]):
+                        by_key[key] = (rank, order, name, lei)
+            # Enough non-pooled candidates to fill the result set; stop
+            # early. A page of pure fund hits must not end the search - the
+            # operating company a brand query wants can sit pages below,
+            # which is exactly how "HSBC" first returned only ETFs.
+            clean = sum(1 for rank, *_ in by_key.values() if rank[0] == 0)
+            if clean >= limit:
+                break
+        best = sorted(by_key.values(), key=lambda item: (item[0], item[1]))
+        return [self._company(name, lei) for _, _, name, lei in best[:limit]]
 
     async def list_filings(
         self,
@@ -190,9 +235,10 @@ class FcaNsmClient:
         criteria: list[dict[str, Any]],
         size: int,
         sort: str = "publication_date",
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         payload = {
-            "from": 0,
+            "from": offset,
             "size": size,
             "sort": sort,
             "keyword": None,
@@ -352,12 +398,36 @@ class FcaNsmClient:
         return pairs
 
     @classmethod
-    def _matches_issuer(cls, query: str, name: str, lei: str | None) -> bool:
+    def _issuer_match_rank(
+        cls, query: str, name: str, lei: str | None
+    ) -> tuple[int, int] | None:
+        """Match quality for one candidate issuer, or None when it is not a
+        match at all. The returned sort key is the pooled-product flag (so a
+        fund, ETF or structured note sharing a brand ranks below the
+        operating company) and then the number of name tokens the query did
+        not consume - the fewer, the better.
+
+        Matching is token-aware, never raw substring: "BP" must not match
+        "IVZ GBP Overnight Return SWAP£" merely because those letters sit
+        inside "GBP". A query token matches a name token exactly, or - for
+        tokens of three or more characters - as its start ("Glaxo" against
+        "GLAXOSMITHKLINE PLC"); shorter tokens ("BP"-style tickers) require
+        an exact token."""
         clean_query = query.strip().upper()
         if lei and clean_query == lei:
-            return True
-        query_name = cls._normalize_name(query)
-        return bool(query_name and query_name in cls._normalize_name(name))
+            return (-1, 0)
+        query_tokens = cls._normalize_name(query).split()
+        name_tokens = cls._normalize_name(name).split()
+        if not query_tokens:
+            return None
+        for token in query_tokens:
+            if not any(
+                token == candidate or (len(token) >= 3 and candidate.startswith(token))
+                for candidate in name_tokens
+            ):
+                return None
+        pooled = int(any(token in _POOLED_PRODUCT_TOKENS for token in name_tokens))
+        return (pooled, max(len(name_tokens) - len(query_tokens), 0))
 
     @staticmethod
     def _normalize_name(value: str) -> str:

@@ -272,12 +272,17 @@ The scheduled live suite checks one issuer per keyless source. A separate,
 reviewed accuracy benchmark pins selected facts from public annual reports and
 can be run locally with `uv run python -m openfilings.benchmarks`.
 
-The smoke suite's balance-sheet identity check only proves something when the
-filing tags all three totals. Where an issuer leaves one to be derived,
-checking `assets = liabilities + equity` would be circular, so the case is
-reported as extracted-but-unverifiable rather than verified, and the run's
-closing tally states how many of each. At present 13 of 21 financial cases
-verify the identity outright.
+The smoke suite's balance-sheet identity check proves something only from
+source facts. Where an issuer leaves the total to be derived but tags both of
+its components, the identity is verified from those components instead
+(`held (total liabilities derived; components foot)`); where the components
+themselves leave a bucket out, the run reports the difference as a `GAP`
+rather than hiding it behind "not_applicable" (Volvo's held-for-sale
+liabilities, for instance); and where neither exists the case is reported as
+extracted-but-unverifiable. The closing tally states how many of each, so a
+green run cannot be mistaken for full reconciliation coverage. At present 24
+cases: 18 verify the identity outright, 1 reports a gap, 2 stay unverifiable,
+and 3 are company-search only.
 
 ## Setup
 

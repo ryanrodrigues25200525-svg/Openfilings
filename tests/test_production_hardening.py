@@ -8,8 +8,12 @@ import pytest
 from openfilings.smoke import (
     SMOKE_CASES,
     SmokeCase,
+    SmokeResult,
     _balance_sheet_identity,
+    identity_holds,
+    identity_uses_source_totals,
     run_live_smoke,
+    summarize_results,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,6 +74,39 @@ async def test_live_smoke_runner_validates_concurrency() -> None:
         await run_live_smoke(_FakeService(), cases=(), concurrency=0)
 
 
+def test_smoke_summary_counts_every_outcome_exactly_once() -> None:
+    def result(label: str, identity_check: str) -> SmokeResult:
+        return SmokeResult(label, f"company-{label}", f"filing-{label}", identity_check)
+
+    results = [
+        result("a", "held"),
+        result("b", "held (liabilities exclude subordinated liabilities)"),
+        result("c", "held (total liabilities derived; components foot)"),
+        result(
+            "d",
+            "GAP at 2024-12-31: current+noncurrent+equity=517203 vs assets=472514",
+        ),
+        result("e", "not_applicable (no balance sheet extracted)"),
+        result(
+            "f",
+            "not_applicable (total liabilities not tagged and components incomplete)",
+        ),
+        result("g", "search_only"),
+    ]
+
+    summary = summarize_results(results)
+
+    assert summary.startswith("7 cases: 3 balance-sheet identity verified")
+    assert "1 with a reported identity gap" in summary
+    assert "2 extracted but unverifiable" in summary
+    assert summary.endswith("1 company-search only.")
+    # Every result lands in exactly one bucket: an identity string matching
+    # none of them would silently inflate the unverifiable count.
+    unknown = summarize_results([result("h", "something new")])
+    assert "0 balance-sheet identity verified" in unknown
+    assert "1 extracted but unverifiable" in unknown
+
+
 def test_balance_sheet_identity_requires_common_source_values() -> None:
     class _Value:
         def __init__(self, end_date: date, value: int, provenance: str = "tagged_xbrl"):
@@ -97,6 +134,138 @@ def test_balance_sheet_identity_requires_common_source_values() -> None:
 
     assert _balance_sheet_identity(_Financials()) == (
         "not_applicable (no common source-extracted balance-sheet period)"
+    )
+
+
+class _FakePeriod:
+    def __init__(self, end_date: date) -> None:
+        self.end_date = end_date
+
+
+class _FakeValue:
+    def __init__(
+        self, end_date: date, value: int, provenance: str = "tagged_xbrl"
+    ) -> None:
+        self.period = _FakePeriod(end_date)
+        self.value = value
+        self.provenance = provenance
+        self.dimensions = ()
+
+
+class _FakeItem:
+    def __init__(self, code: str, values: tuple[_FakeValue, ...]) -> None:
+        self.code = code
+        self.values = values
+
+
+def _identity(*items: tuple[str, tuple[_FakeValue, ...]]) -> str:
+    """Run _balance_sheet_identity over (code, values) balance-sheet facts."""
+
+    class _Balance:
+        line_items = tuple(_FakeItem(code, values) for code, values in items)
+
+    class _Financials:
+        @staticmethod
+        def balance_sheet() -> _Balance:
+            return _Balance()
+
+    return _balance_sheet_identity(_Financials())
+
+
+def test_balance_sheet_identity_accepts_the_subordinated_liability_variant() -> None:
+    """Storebrand Livsforsikring's insurer presentation tags Liabilities
+    *excluding* subordinated debt, so liabilities + equity alone misses total
+    assets by exactly the tagged subordinated figure."""
+
+    period = date(2024, 12, 31)
+    assert (
+        _identity(
+            ("total_assets", (_FakeValue(period, 839_533),)),
+            ("total_liabilities", (_FakeValue(period, 811_744),)),
+            ("subordinated_liabilities", (_FakeValue(period, 9_979),)),
+            ("total_equity", (_FakeValue(period, 17_810),)),
+        )
+        == "held (liabilities exclude subordinated liabilities)"
+    )
+
+
+def test_balance_sheet_identity_reports_a_gap_the_subordinated_leg_misses() -> None:
+    """The subordinated leg only closes *exactly*: anything short of that is a
+    real gap and must not be credited as a variant proof."""
+
+    period = date(2024, 12, 31)
+    gap = _identity(
+        ("total_assets", (_FakeValue(period, 839_533),)),
+        ("total_liabilities", (_FakeValue(period, 811_744),)),
+        ("subordinated_liabilities", (_FakeValue(period, 100),)),
+        ("total_equity", (_FakeValue(period, 17_810),)),
+    )
+
+    assert gap.startswith("GAP at 2024-12-31: liabilities+equity=")
+    assert "subordinated" not in gap
+
+
+def test_balance_sheet_identity_credits_footing_current_noncurrent_components() -> None:
+    """With no source total_liabilities, both components are independent source
+    facts and verify the identity; a derived total must not be credited for
+    it."""
+
+    period = date(2025, 12, 31)
+    assert (
+        _identity(
+            ("total_assets", (_FakeValue(period, 100),)),
+            ("total_liabilities", (_FakeValue(period, 70, "derived"),)),
+            ("current_liabilities", (_FakeValue(period, 30),)),
+            ("noncurrent_liabilities", (_FakeValue(period, 40),)),
+            ("total_equity", (_FakeValue(period, 30),)),
+        )
+        == "held (total liabilities derived; components foot)"
+    )
+
+
+def test_balance_sheet_identity_reports_a_component_gap() -> None:
+    """Volvo's 2024 ESEF report tags current 261,298m and non-current
+    211,216m liabilities, assets 714,564m and equity 197,361m; the missing
+    44,689m is the IFRS 5 held-for-sale liability bucket, which sits in
+    neither subtotal. The gap must be reported, not hidden as not_applicable."""
+
+    period = date(2024, 12, 31)
+    assert _identity(
+        ("total_assets", (_FakeValue(period, 714_564),)),
+        ("current_liabilities", (_FakeValue(period, 261_298),)),
+        ("noncurrent_liabilities", (_FakeValue(period, 211_216),)),
+        ("total_equity", (_FakeValue(period, 197_361),)),
+    ) == ("GAP at 2024-12-31: current+noncurrent+equity=669875 vs assets=714564")
+
+
+def test_balance_sheet_identity_stays_silent_on_incomplete_components() -> None:
+    """One component alone proves nothing: a filing that tags no total and
+    only some of the components must not be accused of a gap."""
+
+    period = date(2025, 12, 31)
+    assert _identity(
+        ("total_assets", (_FakeValue(period, 100),)),
+        ("current_liabilities", (_FakeValue(period, 30),)),
+        ("total_equity", (_FakeValue(period, 70),)),
+    ) == ("not_applicable (total liabilities not tagged and components incomplete)")
+
+
+def test_identity_proof_classification_keeps_variants_and_gaps_apart() -> None:
+    """identity_holds accepts every reconciliation proof; only proofs resting
+    on a source-tagged total satisfy the stricter source-total question a
+    require_source_balance_sheet case asks."""
+
+    assert identity_holds("held")
+    assert identity_holds("held (liabilities exclude subordinated liabilities)")
+    assert identity_holds("held (total liabilities derived; components foot)")
+    assert not identity_holds("GAP at 2024-12-31: liabilities+equity=1 vs assets=2")
+    assert not identity_holds("not_applicable (no balance sheet extracted)")
+    assert identity_uses_source_totals("held")
+    assert identity_uses_source_totals(
+        "held (liabilities exclude subordinated liabilities)"
+    )
+    assert not identity_uses_source_totals(
+        "held (total liabilities derived; components foot)"
     )
 
 

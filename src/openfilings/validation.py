@@ -13,6 +13,12 @@ receivables, inventory, ...): finvariant treats a partially-supplied
 section as "not footing" rather than skipping it, and OpenFilings' PDF
 extraction rarely captures every component of a section - supplying a
 partial breakdown would produce a false failure, not a useful check.
+
+One deliberate exception: ``total_liabilities`` is adjusted upward by
+``subordinated_liabilities`` where the filer's own facts prove its
+"Liabilities" subtotal excludes subordinated debt (see
+``_fold_excluded_subordinated_liabilities``). Without that, a correct
+insurer balance sheet reads as an accounting failure.
 """
 
 from __future__ import annotations
@@ -74,6 +80,22 @@ def _statement_periods(
             continue
         field_name, use_abs = mapping
         for value in item.values:
+            if value.dimensions:
+                # The extraction fell back to a dimension-qualified fact (a
+                # segment or class split) because the statement tagged no
+                # dimensionless one; asserting it as the consolidated total
+                # manufactures failures.
+                continue
+            if value.provenance == "derived":
+                # A derived total is our own arithmetic, not a source fact.
+                # Asserting it against source components only manufactures
+                # failures: Volvo's 2024 ESEF report tags current 261,298m
+                # plus non-current 211,216m liabilities, assets 714,564m and
+                # equity 197,361m, because the 44,689m held-for-sale liability
+                # bucket (IFRS 5) sits in neither subtotal. The derived
+                # total_liabilities would be reported as "not equal to
+                # current + non-current" for a filing that is correct.
+                continue
             period_key = value.period.end_date.isoformat()
             amount = abs(value.value) if use_abs else value.value
             by_period.setdefault(period_key, {})[field_name] = float(amount)
@@ -87,6 +109,67 @@ def _merge(
         target.setdefault(period, {}).update(fields)
 
 
+def _close(expected: float, actual: float) -> bool:
+    """finvariant's own default tolerances, so a fold decision here and a
+    pass/fail decision there agree on the same facts."""
+
+    return abs(actual - expected) <= max(0.5, 0.0001 * abs(expected))
+
+
+def _subordinated_liability_values(statement: FinancialStatement) -> dict[str, float]:
+    """Source subordinated-liability figures by period, for the equation fold.
+
+    Deliberately not a mapped field: finvariant validates period fields
+    against its canonical schema (it has no subordinated role, and its
+    ``other_*`` slots belong to the section checks), so this figure must
+    never reach the dict handed to it.
+    """
+
+    values: dict[str, float] = {}
+    for item in statement.line_items:
+        if item.code != "subordinated_liabilities":
+            continue
+        for value in item.values:
+            if value.dimensions or value.provenance == "derived":
+                continue
+            values[value.period.end_date.isoformat()] = float(value.value)
+    return values
+
+
+def _fold_excluded_subordinated_liabilities(
+    periods: dict[str, dict[str, float]],
+    subordinated: dict[str, float],
+) -> None:
+    """Absorb subordinated debt into total liabilities for the equation check.
+
+    Some filers present a "Liabilities" subtotal that excludes subordinated
+    debt - Storebrand Livsforsikring's 2024 ESEF report tags Liabilities
+    811,744m, SubordinatedLiabilities 9,979m and Equity 17,810m against
+    total assets of 839,533m. Its own facts therefore fail assets =
+    liabilities + equity while footing exactly once the subordinated leg is
+    added. Filers that fold subordinated debt *into* Liabilities already
+    satisfy the plain equation, so this only fires where the source facts
+    themselves prove the subtraction happened: the plain equation misses and
+    the tagged subordinated figure closes it exactly. Without it, every such
+    filing reports a false accounting failure to the user.
+    """
+
+    for period, fields in periods.items():
+        if not {"total_assets", "total_liabilities", "total_equity"} <= fields.keys():
+            continue
+        extra = subordinated.get(period)
+        if extra is None:
+            continue
+        assets = fields["total_assets"]
+        liabilities = fields["total_liabilities"]
+        equity = fields["total_equity"]
+        if _close(assets, liabilities + equity) or not _close(
+            assets, liabilities + extra + equity
+        ):
+            continue
+        fields["total_liabilities"] = liabilities + extra
+
+
 def to_finvariant_statements(financials: FilingFinancials) -> fv.Statements | None:
     """Map a FilingFinancials into finvariant's canonical schema.
 
@@ -96,6 +179,7 @@ def to_finvariant_statements(financials: FilingFinancials) -> fv.Statements | No
     income_statement: dict[str, dict[str, float]] = {}
     balance_sheet: dict[str, dict[str, float]] = {}
     cash_flow: dict[str, dict[str, float]] = {}
+    subordinated: dict[str, float] = {}
     for statement in financials.statements:
         field_map = _FIELDS_BY_STATEMENT_TYPE.get(statement.statement_type)
         if field_map is None:
@@ -105,8 +189,11 @@ def to_finvariant_statements(financials: FilingFinancials) -> fv.Statements | No
             _merge(income_statement, periods)
         elif statement.statement_type == "balance_sheet":
             _merge(balance_sheet, periods)
+            subordinated.update(_subordinated_liability_values(statement))
         elif statement.statement_type == "cash_flow_statement":
             _merge(cash_flow, periods)
+
+    _fold_excluded_subordinated_liabilities(balance_sheet, subordinated)
 
     all_periods = sorted(
         set(income_statement) | set(balance_sheet) | set(cash_flow), reverse=True

@@ -433,6 +433,18 @@ def test_definition_for_label_rejects_total_pasivos_y_patrimonio() -> None:
     assert _definition_for_label("Total Pasivos").code == "total_liabilities"
 
 
+def test_definition_for_label_rejects_total_liabilities_and_equity() -> None:
+    """ "Total liabilities and equity" is the balance-sheet grand total,
+    restating total assets from the liabilities side - not the total
+    liabilities line item. Confirmed live on Barclays' annual report,
+    where it silently set total_liabilities equal to total assets."""
+    from openfilings.xbrl.pdf_statements import _definition_for_label
+
+    assert _definition_for_label("Total liabilities and equity") is None
+    assert _definition_for_label("TOTAL LIABILITIES AND EQUITY") is None
+    assert _definition_for_label("Total liabilities").code == "total_liabilities"
+
+
 def test_number_rejects_page_footer_and_note_reference_text() -> None:
     """A page footer ("DBS Annual Report 2025 ... Financial statements 115")
     or a stray note reference ("Note 27") carries a real word alongside an
@@ -893,6 +905,19 @@ def test_fuzzy_fallback_rejects_other_qualifier_prefix() -> None:
     assert _definition_for_label("Other current liabilities") is None
     assert _definition_for_label("Other non-current assets") is None
     assert _definition_for_label("Other current assets") is None
+
+
+def test_fuzzy_fallback_rejects_inserted_content_word() -> None:
+    """A label carrying an extra content word its best alias does not have
+    is a different disclosure, not a misspelling: "Current tax liabilities"
+    scores 90.5 against "current liabilities" (above the 90 threshold) -
+    confirmed live on Barclays' annual report, where the tax line then
+    replaced the real current-liabilities subtotal. A genuine misspelling
+    keeps the same word count ("Curent liabilities")."""
+    from openfilings.xbrl.pdf_statements import _definition_for_label
+
+    assert _definition_for_label("Current tax liabilities") is None
+    assert _definition_for_label("Curent liabilities").code == "current_liabilities"
 
 
 def test_financial_extractor_routes_pdf_documents_to_table_parser(monkeypatch) -> None:

@@ -29,6 +29,14 @@ DATASET_URL = (
 )
 
 _ISSUER_TYPES = {"EMPRESAS EMISORAS", "EMPRESAS MERCADO ALTERNATIVO DE VALORES"}
+# RPJ formats have widened beyond the legacy one-letter-plus-five-digits
+# shape (B30006): live 2025-2026 registries also carry two-letter codes
+# (CM0001 Volcan, CM0006 Cerro Verde, OE2305 Intercorp), three-letter codes
+# (AFP002) and all-digit codes (023106 AENZA). The legacy-only pattern
+# silently dropped 134 of 274 issuer rows in one year's registry - about
+# half of the market was unfindable - so accept every observed shape; the
+# row's company type and name are still validated separately.
+_RPJ_PATTERN = re.compile(r"[A-Z]\d{5}|[A-Z]{2}\d{4}|[A-Z]{3}\d{3}|\d{6}")
 _STATEMENTS = (
     ("BG", "Estado de situación financiera"),
     ("GP", "Estado de resultados"),
@@ -330,7 +338,7 @@ class SmvClient(RetryingClient):
         ruc = str(row.get("RUC", "")).strip()
         if (
             company_type not in _ISSUER_TYPES
-            or not re.fullmatch(r"[A-Z]\d{5}", rpj)
+            or not _RPJ_PATTERN.fullmatch(rpj)
             or not name
         ):
             return None
@@ -355,7 +363,7 @@ class SmvClient(RetryingClient):
             year = int(row.get("Ejercicio", 0))
         except (TypeError, ValueError):
             return None
-        if not re.fullmatch(r"[A-Z]\d{5}", rpj) or year < 2000:
+        if not _RPJ_PATTERN.fullmatch(rpj) or year < 2000:
             return None
         type_name = "Consolidated" if information_type == "C" else "Individual"
         document_id = f"smv:{year}:A:{information_type}:{rpj}"
@@ -417,7 +425,7 @@ class SmvClient(RetryingClient):
         clean = value.strip().upper()
         if clean.casefold().startswith("pe_smv_"):
             clean = clean[len("pe_smv_") :]
-        if not re.fullmatch(r"[A-Z]\d{5}", clean):
+        if not _RPJ_PATTERN.fullmatch(clean):
             raise SourceError(
                 "Expected a Peruvian company ID shaped like pe_smv_B30006."
             )
@@ -425,7 +433,9 @@ class SmvClient(RetryingClient):
 
     @staticmethod
     def _document_key(value: str) -> tuple[int, str, str]:
-        match = re.fullmatch(r"smv:(20\d{2}):A:([CI]):([A-Z]\d{5})", value.strip())
+        match = re.fullmatch(
+            rf"smv:(20\d{{2}}):A:([CI]):({_RPJ_PATTERN.pattern})", value.strip()
+        )
         if match is None:
             raise DocumentUnavailableError("Unsafe SMV document identifier.")
         return int(match.group(1)), match.group(2), match.group(3)

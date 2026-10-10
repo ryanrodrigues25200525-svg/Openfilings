@@ -1545,7 +1545,13 @@ _DISQUALIFYING_SUFFIX_MARKERS = (
     # is the same pattern in Spanish, restating total assets rather than
     # total liabilities alone. Mexican filers use "Capital Contable" for
     # equity instead of "Patrimonio" ("Total Pasivo y Capital Contable").
+    # The reverse English phrasing - "Total liabilities and equity" - is
+    # the same grand total read from the liabilities side; without the
+    # marker it prefix-matches "total liabilities" and sets the entity's
+    # total liabilities equal to its total assets (confirmed live on
+    # Barclays' annual report).
     "and liabilities",
+    "and equity",
     "y patrimonio",
     "y capital contable",
     # "Total Assets of the Sponsored Structured Entities" is scoped to a
@@ -1610,6 +1616,12 @@ _FUZZY_MATCH_MIN_MARGIN = 5
 _FUZZY_MATCH_MAX_LENGTH = 45
 
 
+def _content_tokens(text: str) -> int:
+    """Words of three or more characters. Shorter fragments are ignored
+    because a PDF text layer can split a word ("tot al assets")."""
+    return sum(1 for token in text.split() if len(token) >= 3)
+
+
 def _fuzzy_definition_for_label(normalized: str) -> LineItemDefinition | None:
     """A last-resort fallback for near-miss spellings a PDF's text layer
     can introduce - a dropped ligature ("Proft" for "Profit"), an OCR
@@ -1634,26 +1646,39 @@ def _fuzzy_definition_for_label(normalized: str) -> LineItemDefinition | None:
     ambiguous and rejected rather than guessed at. The label is
     additionally capped to roughly the length of the longest alias, so a
     long prose sentence that merely shares some words with an alias can
-    never win a fuzzy match.
+    never win a fuzzy match. A genuine misspelling keeps a 1:1 word
+    correspondence (a transposed letter, a dropped character), so a label
+    carrying more three-character-plus words than its best alias is
+    treated as carrying qualifying text and rejected outright: "Current
+    tax liabilities" scores 90.5 against "current liabilities", above the
+    threshold, and without this check it silently replaced the real
+    current-liabilities subtotal with the tax line's value on Barclays'
+    annual report.
     """
     if len(normalized) > _FUZZY_MATCH_MAX_LENGTH:
         return None
     best_code: str | None = None
+    best_alias = ""
     best_score = 0.0
     runner_up_score = 0.0
     for code, aliases in _LINE_ITEM_ALIASES.items():
-        code_best_score = max(
-            (fuzz.ratio(normalized, _normalize_label(alias)) for alias in aliases),
-            default=0.0,
-        )
+        code_best_score = 0.0
+        code_best_alias = ""
+        for alias in aliases:
+            normalized_alias = _normalize_label(alias)
+            score = fuzz.ratio(normalized, normalized_alias)
+            if score > code_best_score:
+                code_best_score, code_best_alias = score, normalized_alias
         if code_best_score > best_score:
             best_code, best_score, runner_up_score = code, code_best_score, best_score
+            best_alias = code_best_alias
         elif code_best_score > runner_up_score:
             runner_up_score = code_best_score
     if (
         best_code is not None
         and best_score > _FUZZY_MATCH_MIN_SCORE
         and best_score - runner_up_score >= _FUZZY_MATCH_MIN_MARGIN
+        and _content_tokens(normalized) <= _content_tokens(best_alias)
     ):
         return _DEFINITIONS[best_code]
     return None

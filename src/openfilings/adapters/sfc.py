@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime
 import httpx
 
 from openfilings._version import __version__
-from openfilings.adapters._common import RetryingClient
+from openfilings.adapters._common import RetryingClient, ranked_matches
 from openfilings.adapters.base import SourceDocument
 from openfilings.exceptions import DocumentUnavailableError, SourceError
 from openfilings.limits import MAX_TAGGED_DOCUMENT_BYTES
@@ -42,8 +42,14 @@ CUIF_DATASET_URL = "https://www.datos.gov.co/resource/mxk5-ce6w.json"
 _BALANCE_SHEET_ACCOUNT_CODES = ("100000", "200000", "300000", "110000")
 
 
+def _is_equity_row(row: dict[str, object]) -> bool:
+    """True for the registry line that lists the issuer's common shares."""
+
+    return str(row.get("nmEspecie", "")).strip().casefold() == "accion"
+
+
 class SfcClient(RetryingClient):
-    """Search BVC equity issuers and retrieve SFC year-end report PDFs."""
+    """Search BVC-listed issuers and retrieve SFC year-end report PDFs."""
 
     source: SourceName = "sfc"
 
@@ -83,12 +89,38 @@ class SfcClient(RetryingClient):
             raise SourceError("SFC returned an invalid issuer response.") from exc
         if not isinstance(rows, list):
             raise SourceError("SFC returned an invalid issuer response.")
+        # The registry exposes one row per *security*, so a name query returns
+        # the same issuer once per species (ACCION, BONO, ...). Collect every
+        # issuer rather than the first `limit` rows: upstream order is not
+        # alphabetical, and truncating before local ranking once hid Ecopetrol
+        # (equity) behind its own bond lines. Equity-registered issuers rank
+        # first - an issuer with listed equity is the better answer to a name
+        # query - and bond-only lines stay as lower-ranked, still-labelable
+        # candidates rather than being dropped.
         companies: dict[str, Company] = {}
+        equity_ids: set[str] = set()
         for row in rows:
             company = self._company_from_row(row)
-            if company is not None:
-                companies.setdefault(company.id, company)
-        return list(companies.values())[: max(1, limit)]
+            if company is None:
+                continue
+            companies.setdefault(company.id, company)
+            if isinstance(row, dict) and _is_equity_row(row):
+                equity_ids.add(company.id)
+        if not companies:
+            return []
+        ranked = ranked_matches(
+            clean_query,
+            [((company.name,), company) for company in companies.values()],
+            limit=len(companies),
+        )
+        if not ranked:
+            # The registry matched the name but local folding did not (an
+            # accent- or punctuation-only difference): keep its own answer
+            # rather than dropping a valid hit.
+            ranked = list(companies.values())
+        ordered = [company for company in ranked if company.id in equity_ids]
+        ordered += [company for company in ranked if company.id not in equity_ids]
+        return ordered[: max(1, limit)]
 
     async def list_filings(
         self,
@@ -172,10 +204,7 @@ class SfcClient(RetryingClient):
     def _company_from_row(row: object) -> Company | None:
         if not isinstance(row, dict):
             return None
-        if (
-            str(row.get("nmEspecie", "")).strip().casefold() != "accion"
-            or str(row.get("cdBolsa", "")).strip().upper() != "BVC"
-        ):
+        if str(row.get("cdBolsa", "")).strip().upper() != "BVC":
             return None
         entity_type = str(row.get("rnCotien", "")).strip()
         code = str(row.get("rnCodent", "")).strip()
@@ -191,6 +220,7 @@ class SfcClient(RetryingClient):
             )
             if part
         )
+        equity = _is_equity_row(row)
         return Company(
             id=f"co_sfc_{entity_type}_{code}",
             source_id=f"{entity_type}:{code}",
@@ -199,7 +229,11 @@ class SfcClient(RetryingClient):
             market="CO",
             country_code="CO",
             local_code=nit or None,
-            status="active BVC equity issuer",
+            status=(
+                "active BVC equity issuer"
+                if equity
+                else "active BVC issuer (debt securities only)"
+            ),
             company_type=str(row.get("nombre", "")).strip() or "SFC issuer",
             address=address or None,
             source_url=PORTAL_URL,

@@ -174,18 +174,33 @@ class EsefClient:
         if lei:
             return await self._entity_query(lei, limit=limit, lei=True)
 
-        companies = await self._entity_query(f"%{clean_query}%", limit=limit)
-        if companies:
-            return companies
+        # Fetch on the raw ilike and rank locally. Upstream returns matches in
+        # registry order, not by relevance, so keeping its first `limit` rows
+        # let a short query lose to an unrelated name that merely *contains*
+        # it: "ING" resolved to "N.V. Bever Holding" ahead of "ING GROEP N.V."
+        candidates = await self._entity_query(
+            f"%{clean_query}%", limit=_FALLBACK_PAGE_SIZE, truncate=False
+        )
+        matches = ranked_matches(
+            clean_query,
+            [((company.name,), company) for company in candidates],
+            limit=limit,
+        )
+        if matches:
+            return matches
+        if candidates:
+            # Upstream ilike matched but local folding did not (a query of
+            # punctuation, for instance): keep its answer over none.
+            return candidates[:limit]
 
         # filings.xbrl.org matches names with a byte-wise SQL ilike, so a
         # query missing a diacritic never matches ("Jeronimo" against
-        # "JERONIMO MARTINS SGPS SA" with an accented O). Retry on a short
-        # accent-free prefix, then rank locally where normalize_text folds
+        # "JERONIMO MARTINS SGPS SA" with an accented O). Retry on short
+        # accent-free fragments, then rank locally where normalize_text folds
         # the diacritics away. Only runs when the direct match found nothing.
         for pattern in self._fallback_patterns(clean_query):
             candidates = await self._entity_query(
-                pattern, limit=_FALLBACK_PAGE_SIZE, rank=False
+                pattern, limit=_FALLBACK_PAGE_SIZE, truncate=False
             )
             if not candidates:
                 continue
@@ -197,25 +212,36 @@ class EsefClient:
 
     @staticmethod
     def _fallback_patterns(query: str) -> list[str]:
-        """Short leading fragments likely to survive an accent mismatch."""
+        """Short fragments likely to survive an accent mismatch upstream."""
 
         first = query.split()[0] if query.split() else query
+        normalized = normalize_text(first)
         patterns: list[str] = []
-        for candidate in (
+        candidates = [
             first[:_FALLBACK_PREFIX],
-            normalize_text(first)[:_FALLBACK_PREFIX],
+            normalized[:_FALLBACK_PREFIX],
             # Skip the first character too: a name whose *leading* letter is
             # the accented one ("Orsted" against "ORSTED A/S" with a slashed
             # O) has no usable accent-free prefix at all.
-            normalize_text(first)[1 : 1 + _FALLBACK_PREFIX],
-        ):
+            normalized[1 : 1 + _FALLBACK_PREFIX],
+        ]
+        # Diacritics sit on vowels, so the longest consonant run of the query
+        # is the one fragment that cannot carry one ("Wartsila" against
+        # "WÄRTSILÄ OYJ ABP"). Longest first; ties keep their original order.
+        runs = sorted(
+            (run for run in re.findall(r"[^aeiouy]+", normalized)),
+            key=len,
+            reverse=True,
+        )
+        candidates.extend(runs[:2])
+        for candidate in candidates:
             fragment = candidate.strip()
             if len(fragment) >= _FALLBACK_PREFIX and f"%{fragment}%" not in patterns:
                 patterns.append(f"%{fragment}%")
         return patterns
 
     async def _entity_query(
-        self, value: str, *, limit: int, lei: bool = False, rank: bool = True
+        self, value: str, *, limit: int, lei: bool = False, truncate: bool = True
     ) -> list[Company]:
         filters = [
             {
@@ -245,7 +271,10 @@ class EsefClient:
                 continue
             seen.add(company.lei or company.source_id)
             companies.append(company)
-            if rank and len(companies) >= max(1, limit):
+            # Callers that rank locally need every row the page returned;
+            # the identifier lookup is unique anyway, so truncation there
+            # only bounds a pathological upstream response.
+            if truncate and len(companies) >= max(1, limit):
                 break
         return companies
 

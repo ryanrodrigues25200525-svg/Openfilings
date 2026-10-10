@@ -217,6 +217,12 @@ LINE_ITEMS = (
         ("NoncurrentLiabilities", "CreditorsDueAfterOneYear"),
     ),
     LineItemDefinition(
+        "subordinated_liabilities",
+        "Subordinated liabilities",
+        "balance_sheet",
+        ("SubordinatedLiabilities",),
+    ),
+    LineItemDefinition(
         "total_liabilities",
         "Total liabilities",
         "balance_sheet",

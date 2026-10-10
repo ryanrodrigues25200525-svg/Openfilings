@@ -284,6 +284,44 @@ async def test_sfc_filters_bvc_equities_and_downloads_financial_pdf() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sfc_ranks_equity_issuers_ahead_of_debt_only_ones() -> None:
+    """The registry exposes one row per security, in no useful order, and an
+    issuer with listed equity is the better answer to a name query: a bank
+    that only has bonds on the BVC must not outrank one with equity just
+    because its name sorts first."""
+
+    def row(name: str, entity_type: str, code: str, species: str) -> dict[str, object]:
+        return {
+            "nombre": "ENTIDADES PUBLICAS",
+            "rnCotien": entity_type,
+            "rnCodent": code,
+            "nmEntidad": name,
+            "nrNitEntidad": 900123456,
+            "nmEspecie": species,
+            "cdBolsa": "BVC",
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("emisores-inscritos-vigentes/reporte")
+        assert request.url.params["nombreEntidad"] == "BANCO"
+        return httpx.Response(
+            200,
+            json=[
+                row("BANCO AGRARIO S.A.", "100", "001", "BONO"),
+                row("BANCOLOMBIA S.A.", "200", "002", "ACCION"),
+            ],
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = SfcClient(client=http)
+        companies = await client.search_companies("BANCO")
+
+    assert [company.id for company in companies] == ["co_sfc_200_002", "co_sfc_100_001"]
+    assert companies[0].status == "active BVC equity issuer"
+    assert companies[1].status == "active BVC issuer (debt securities only)"
+
+
+@pytest.mark.asyncio
 async def test_smv_builds_peru_filing_from_official_statement_rows() -> None:
     company_row = {
         "RPJ": "B30006",
@@ -352,6 +390,70 @@ async def test_smv_builds_peru_filing_from_official_statement_rows() -> None:
     assert financials.balance_sheet() is not None
     assert financials.balance_sheet().currency == "PEN"  # type: ignore[union-attr]
     assert financials.extraction_method == "smv-open-data-tables"
+
+
+@pytest.mark.asyncio
+async def test_smv_accepts_modern_rpj_shapes_from_live_registries() -> None:
+    """RPJ codes have widened beyond the legacy one-letter-plus-five-digits
+    form (B30006): CM0001 (Volcan), CM0006 (Cerro Verde), OE2305
+    (Intercorp), three-letter codes (AFP002) and all-digit codes (023106,
+    AENZA) are live in the 2025-2026 registries, and the legacy-only
+    pattern silently dropped 134 of 274 rows in one year - about half of
+    Peru's market became unfindable. Every observed shape must resolve,
+    list filings and download its document."""
+    company_row = {
+        "RPJ": "CM0001",
+        "TipoEmpresa": "EMPRESAS EMISORAS",
+        "NombreEmpresa": "VOLCAN COMPAÑIA MINERA S.A.A.",
+        "RUC": "20383045267",
+        "Ejercicio": "2023",
+        "DescripcionCuenta": None,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if request.url.path.endswith("/obtener_EFData"):
+            assert body["rows"] == 500
+            assert body["sidx"] == "RPJ"
+            return httpx.Response(
+                200,
+                json={"d": {"rows": [company_row], "total": 1}},
+            )
+        assert body["Ejercicio"] == "2023"
+        assert body["Periodo"] == "A"
+        assert body["Tipo"] in {"C", "I"}
+        rows = [
+            {
+                **company_row,
+                "DescripcionCuenta": "Total de activos",
+                "Monto1": 1000,
+                "Monto2": 900,
+            }
+        ]
+        if request.url.path.endswith("/obtener_BalanceGeneral"):
+            rows.append(
+                {
+                    **company_row,
+                    "DescripcionCuenta": "Total de pasivos",
+                    "Monto1": 400,
+                    "Monto2": 350,
+                }
+            )
+        return httpx.Response(200, json={"d": json.dumps(rows)})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = SmvClient(client=http, today=lambda: date(2023, 12, 31))
+        companies = await client.search_companies("Volcan")
+        filings = await client.list_filings(companies[0].id, limit=2)
+        document = await client.download_document(filings[0].document_id or "")
+
+    assert companies[0].id == "pe_smv_CM0001"
+    assert {filing.id for filing in filings} == {
+        "pe_smv_filing_CM0001_2023_C",
+        "pe_smv_filing_CM0001_2023_I",
+    }
+    assert document.media_type == "text/html"
+    assert b"Total de activos" in document.data
 
 
 @pytest.mark.asyncio

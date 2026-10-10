@@ -81,6 +81,90 @@ async def test_search_companies_accepts_prefixed_lei() -> None:
     assert companies[0].lei == ASML_LEI
 
 
+def _entity(name: str, lei: str, entity_id: str) -> dict[str, object]:
+    return {
+        "type": "entity",
+        "id": entity_id,
+        "attributes": {"name": name, "identifier": lei},
+    }
+
+
+@pytest.mark.asyncio
+async def test_search_companies_ranks_locally_instead_of_trusting_registry_order() -> (
+    None
+):
+    """Upstream returns matches in registry order, so slicing its first
+    `limit` rows made "ING" resolve to N.V. Bever Holding - an unrelated
+    name that merely contains "ing" inside "Holding" - ahead of ING GROEP
+    N.V. Ranking locally must put the prefix matches first."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/entities"
+        filters = json.loads(request.url.params["filter"])
+        assert filters[0] == {"name": "name", "op": "ilike", "val": "%ING%"}
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    _entity("N.V. Bever Holding", "724500X2YFDG0L56AS37", "111"),
+                    _entity("ING GROEP N.V.", "549300NYKK9MWM7GGW15", "222"),
+                    _entity("ING BANK N.V.", "3TK20IVIUJ8J3ZU0QE75", "333"),
+                ],
+                "meta": {"count": 3},
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        source = EsefClient(NETHERLANDS, client=http)
+        companies = await source.search_companies("ING", limit=2)
+
+    assert {company.name for company in companies} == {
+        "ING BANK N.V.",
+        "ING GROEP N.V.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_search_companies_retries_a_fragment_when_a_diacritic_blocks_ilike() -> (
+    None
+):
+    """filings.xbrl.org matches names with a byte-wise ilike, so "Wartsila"
+    can never match "WÄRTSILÄ OYJ ABP". The accent-free consonant run "rts"
+    can, and folding the returned row locally then ranks it."""
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        value = json.loads(request.url.params["filter"])[0]["val"]
+        seen.append(value)
+        if value == "%rts%":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [_entity("WÄRTSILÄ OYJ ABP", "743700G7A9J1PHM3X223", "9")],
+                    "meta": {"count": 1},
+                },
+            )
+        return httpx.Response(200, json={"data": [], "meta": {"count": 0}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        source = EsefClient(FINLAND, client=http)
+        companies = await source.search_companies("Wartsila")
+
+    assert seen[0] == "%Wartsila%"
+    assert "%rts%" in seen
+    assert [company.name for company in companies] == ["WÄRTSILÄ OYJ ABP"]
+
+
+def test_fallback_patterns_carry_the_accent_free_consonant_run() -> None:
+    """Both live misses: a diacritic mid-name (WÄRTSILÄ) and a leading one
+    (ØRSTED A/S) - the first character of the query is unusable there, so
+    the run has to carry the retry."""
+
+    assert "%rts%" in EsefClient._fallback_patterns("Wartsila")
+    assert "%rst%" in EsefClient._fallback_patterns("Ørsted")
+
+
 @pytest.mark.asyncio
 async def test_list_filings_maps_inline_report_and_period() -> None:
     def handler(request: httpx.Request) -> httpx.Response:

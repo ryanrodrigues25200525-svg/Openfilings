@@ -74,6 +74,34 @@ def test_probe_runner_classifies_verified_unverifiable_and_failed() -> None:
     assert by_label["search only"].filing_id is None
 
 
+def test_probe_classifies_insurer_and_component_proofs_as_verified() -> None:
+    """Both variant proofs reconcile source facts - Storebrand's tagged
+    subordinated leg, and a filer tagging both liability components while no
+    total - so the probe must count them verified rather than unverifiable."""
+
+    service = _ProbeService(
+        {
+            "insurer": _Outcome(
+                company=True, filings=True, financials="held-subordinated"
+            ),
+            "components": _Outcome(
+                company=True, filings=True, financials="held-components"
+            ),
+        }
+    )
+    cases = (
+        ProbeCase("insurer label", "insurer", "esef"),
+        ProbeCase("components label", "components", "esef"),
+    )
+
+    results = _run(service, cases)
+
+    assert {item.label: item.outcome for item in results} == {
+        "insurer label": "verified",
+        "components label": "verified",
+    }
+
+
 def test_probe_runner_never_raises_and_timeout_marks_failed() -> None:
     service = _ProbeService({"slow": _Outcome(company=True, filings="hang")})
     results = _run(
@@ -331,6 +359,10 @@ class _ProbeFiling:
     async def financials(self, refresh: bool = True) -> object:
         if self._financials == "held":
             return _HeldFinancials()
+        if self._financials == "held-subordinated":
+            return _HeldFinancials(subordinated=True)
+        if self._financials == "held-components":
+            return _HeldFinancials(components_only=True)
         if self._financials == "no-balance":
             return _NoBalanceFinancials()
         from openfilings.exceptions import FinancialsUnavailableError
@@ -339,6 +371,12 @@ class _ProbeFiling:
 
 
 class _HeldFinancials:
+    def __init__(
+        self, *, subordinated: bool = False, components_only: bool = False
+    ) -> None:
+        self._subordinated = subordinated
+        self._components_only = components_only
+
     def balance_sheet(self) -> object:
         from datetime import date
         from decimal import Decimal
@@ -369,14 +407,33 @@ class _HeldFinancials:
                 ),
             )
 
-        return FinancialStatement(
-            statement_type="balance_sheet",
-            title="Balance sheet",
-            line_items=(
+        if self._subordinated:
+            # An insurer presentation whose Liabilities subtotal excludes
+            # subordinated debt: 200 + 50 + 100 = 350 assets.
+            items = (
+                item("total_assets", Decimal("350")),
+                item("total_liabilities", Decimal("200")),
+                item("subordinated_liabilities", Decimal("50")),
+                item("total_equity", Decimal("100")),
+            )
+        elif self._components_only:
+            # No total liabilities tagged; both components are, and they foot.
+            items = (
+                item("total_assets", Decimal("100")),
+                item("current_liabilities", Decimal("30")),
+                item("noncurrent_liabilities", Decimal("40")),
+                item("total_equity", Decimal("30")),
+            )
+        else:
+            items = (
                 item("total_assets", Decimal("300")),
                 item("total_liabilities", Decimal("200")),
                 item("total_equity", Decimal("100")),
-            ),
+            )
+        return FinancialStatement(
+            statement_type="balance_sheet",
+            title="Balance sheet",
+            line_items=items,
         )
 
 
