@@ -98,6 +98,80 @@ ACCURACY_BENCHMARKS = (
             ),
         ),
     ),
+    # Transcribed from the Volvo Group Annual Report 2024, Board of
+    # Directors' report balance-sheet summary (Total assets SEK 714,564 M,
+    # Total equity SEK 197,361 M for 2024; comparatives 674,068 / 180,739),
+    # corroborated by the ESEF filing's own tagged facts (ifrs-full:Assets
+    # 714.564 and ifrs-full:Equity 197.361 at scale 6, i.e. x10^6 SEK).
+    # Regression guard for issue #7: this filing tags no total-liabilities
+    # line, so the identity check cannot fire on it - these pins are what
+    # fail if selection or scaling drifts.
+    AccuracyBenchmark(
+        label="ESEF Sweden Volvo FY2024 balance sheet",
+        filing_id="se_esef_18913",
+        filing_url="https://filings.xbrl.org/filing/18913/",
+        facts=(
+            ReferenceFact(
+                "total_assets",
+                "balance_sheet",
+                date(2024, 12, 31),
+                Decimal("714564000000"),
+                "iso4217:SEK",
+                "ifrs-full:Assets",
+            ),
+            ReferenceFact(
+                "total_equity",
+                "balance_sheet",
+                date(2024, 12, 31),
+                Decimal("197361000000"),
+                "iso4217:SEK",
+                "ifrs-full:Equity",
+            ),
+        ),
+    ),
+    # Transcribed from Keppel Ltd. Annual Report 2025, Balance Sheets as at
+    # 31 December 2025 (Group, S$'000): Total equity 11,186,180 and
+    # Non-current liabilities 10,122,923 (Term loans 9,409,036 + Lease
+    # 107,826 + Deferred tax 323,529 + Derivative 161,564 + Other 120,968).
+    # A "net assets" presentation states no total-assets line, so the
+    # identity check cannot fire on it - these pins guard the exact issue
+    # #7 regressions (Net assets misread as the NCL subtotal; "Other
+    # non-current liabilities" overwriting the real subtotal).
+    # Note the total-equity concept is "pdf-label:net-assets", not
+    # "pdf-label:total-equity": within one statement section the later,
+    # differently-worded label wins by design, and the source PDF carries
+    # both rows with identical figures ("Total equity" p.132 lines 47-51,
+    # "Net assets" lines 292-296), so the value is unaffected either way.
+    AccuracyBenchmark(
+        label="Singapore SGX Keppel FY2025 balance sheet",
+        filing_id="sg_sgx_CMLEN559K1LSH1QR",
+        filing_url=(
+            "https://links.sgx.com/1.0.0/corporate-announcements/"
+            "CMLEN559K1LSH1QR/8ca6c9f8fabd1326ebe962dd774c0a5ab2f63bf5650653c853d449a52c5b47af"
+        ),
+        facts=(
+            ReferenceFact(
+                "total_equity",
+                "balance_sheet",
+                date(2025, 12, 31),
+                Decimal("11186180000"),
+                "SGD",
+                "pdf-label:net-assets",
+                "pdf_table",
+                75,
+            ),
+            ReferenceFact(
+                "noncurrent_liabilities",
+                "balance_sheet",
+                date(2025, 12, 31),
+                Decimal("10122923000"),
+                "SGD",
+                "pdf-label:non-current-liabilities",
+                "pdf_table",
+                75,
+            ),
+        ),
+    ),
 )
 
 
