@@ -86,7 +86,7 @@ carries the reproductions.
 
 **Verification gaps**
 
-- [x] [#7](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/7) — the Sweden and Singapore regression guards are now pinned reference facts (Volvo FY2024, Keppel FY2025); the identity check itself still correctly refuses circular comparisons on derived totals by design
+- [x] [#7](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/7) — the Sweden and Singapore regression guards are now pinned reference facts (Volvo FY2024, Keppel FY2025), transcribed from the published reports and verified against a live run
 - [ ] [#8](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/8) — pinned accuracy benchmarks cover 2 issuers across 25 markets. A value can reconcile perfectly and still be wrong
 - [x] [#9](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/9) — the multi-issuer probe that found this session's defects was a throwaway script, so the next per-issuer defect will be equally invisible
 - [ ] [#11](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/11) — South Korea has never run against a live DART key; mocked tests only
@@ -123,7 +123,6 @@ No dates are promised. In rough order of how close each one is:
 | --- | --- |
 | `category="current_report"` / `"proxy"` for UK, India, Brazil | Cheapest remaining EdgarTools-parity step — needs only a type-code allowlist per source, no new HTTP calls. These disclosures are already returned unfiltered today |
 | Live verification of South Korea (DART) | Needs a free API key. The connector is written and unit-tested; nothing about it has touched a real response |
-| Pinned reference facts for Sweden and Singapore | Their regression guards currently cannot fire, because both filings derive a total. Closing this needs source-transcribed figures in `benchmarks.py` |
 | **Germany** | Blocked upstream — `filings.xbrl.org` currently lists German filings as unavailable for reliable discovery |
 | **Chile**, **Indonesia**, **Thailand** | On hold. Chile's CMF exposes a legacy PHP form rather than an API and needs fresh live reconnaissance before any build starts |
 | Insider and major-holding coverage for the 13 ESEF national OAMs | Largest remaining lift, lowest priority |
@@ -140,7 +139,7 @@ Three layers, and they prove different things. Real output, not illustrative.
 ### Unit tests — `uv run pytest`
 
 ```
-219 passed, 7 warnings in 1.65s
+269 passed, 7 warnings in 2.23s
 ```
 
 Fast and offline: every source is a recorded fixture, so this catches parsing
@@ -153,28 +152,33 @@ One issuer per keyless source, against the real endpoints, ending in a tally
 of what was actually proved:
 
 ```
+PASS  ESEF Netherlands nl_lei_724500Y6DUVHQD6OXN27  nl_esef_23718
+      held (total liabilities derived; components foot)
 PASS  ESEF Italy       it_lei_WOCMU6HCI0OJWNPRZS33  it_esef_18316   held
-PASS  ESEF Finland     fi_lei_549300A0JPRWG1KI7U06  fi_esef_23894   held
-PASS  ESEF Portugal    pt_lei_529900CLC3WDMGI9VH80  pt_esef_19216   held
 PASS  Mexico BMV       mx_bmv_6024                  mx_bmv_filing_1575696  held
 PASS  India NSE        in_nse_RELIANCE              in_nse_filing_29285    held
-PASS  Colombia SFC     co_sfc_001_039               co_sfc_filing_125473   held
-PASS  Turkey KAP       tr_kap_4028e4a1486ec80a...   tr_kap_1605247  held
+PASS  Turkey KAP       tr_kap_4028e4a1486ec80a...   tr_kap_1649492  held
 PASS  ESEF Sweden      se_lei_549300HGV012CNC8JD22  se_esef_18913
-      not_applicable (no common source-extracted balance-sheet period)
+      GAP at 2024-12-31: current+noncurrent+equity=669875000000 vs assets=714564000000
 PASS  Singapore SGX    sg_sgx_1U68                  sg_sgx_CMLEN559K1LSH1QR
       not_applicable (no common source-extracted balance-sheet period)
 PASS  Australia ASX    au_asx_BHP                   None            search_only
 
-24 cases: 13 balance-sheet identity verified, 8 extracted but unverifiable
-(a total was derived), 3 company-search only.
+24 cases: 18 balance-sheet identity verified, 1 with a reported identity gap,
+2 extracted but unverifiable (no verifiable balance sheet), 3 company-search
+only.
 ```
 
-`not_applicable` is deliberately not dressed up as a pass. Where a filing
-leaves one of the three totals to be derived, checking `assets = liabilities +
-equity` against a total computed as `assets - equity` is circular, so the case
-proves only that extraction ran. The thirteen that do verify are asserted
-strictly — degrading to a derived total fails the run.
+`not_applicable` is deliberately not dressed up as a pass: the filing tagged
+no usable liability side, so the case proves only that extraction ran. Where a
+filing leaves the total to be derived but tags both of its components, the
+identity is verified from those source facts instead (`held (total liabilities
+derived; components foot)`); where the components themselves leave a bucket
+out, the run prints the difference as a `GAP` rather than hiding it behind
+`not_applicable` (Volvo's 2024 report puts its 44,689m held-for-sale liability
+bucket in neither subtotal). Cases whose source is known to tag all three
+totals directly set `require_source_balance_sheet` and fail the run if the
+proof falls back to a derived total.
 
 ### Multi-issuer probe
 
@@ -183,8 +187,10 @@ responds, not that a market works. Probing 42 issuers the smoke suite never
 touches found four defects it could never have caught, including Indian PDF
 figures understated by a factor of ten million and equity totals silently
 dropping non-controlling interests. Both are fixed; see the
-[changelog](CHANGELOG.md). Broadening this into a repeatable check is open
-work, not something the suite does today.
+[changelog](CHANGELOG.md). The repeatable form of that sweep is
+`openfilings.probe` — 2-3 reviewed issuers per keyless market, none of them
+the smoke issuer — scheduled monthly in `.github/workflows/live-probe.yml`,
+reporting verified / unverifiable / failed per issuer instead of pass/fail.
 
 ## Documentation
 
