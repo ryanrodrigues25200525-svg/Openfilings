@@ -140,7 +140,7 @@ Three layers, and they prove different things. Real output, not illustrative.
 ### Unit tests — `uv run pytest`
 
 ```
-219 passed, 7 warnings in 1.65s
+324 passed, 7 warnings in 4.85s
 ```
 
 Fast and offline: every source is a recorded fixture, so this catches parsing
@@ -185,6 +185,29 @@ figures understated by a factor of ten million and equity totals silently
 dropping non-controlling interests. Both are fixed; see the
 [changelog](CHANGELOG.md). Broadening this into a repeatable check is open
 work, not something the suite does today.
+
+## Live accuracy benchmarks
+
+`uv run python -m openfilings.benchmarks` pins a handful of figures transcribed
+from specific public filings and fails if the normalized output changes:
+
+```
+PASS  UK FCA NSM Tesco FY2026 balance sheet   uk_nsm_NI-000144970   2 facts
+PASS  ESEF ASML FY2025 balance sheet           nl_esef_23718         2 facts
+```
+
+These are reviewed fixtures, not a claim that two issuers represent a market.
+Broadening coverage to one issuer per extraction path is tracked in issue #8.
+
+## Example searches that work
+
+```bash
+uv run openfilings search "SHEL"                      # Shell PLC (UK) + NL ESEF
+uv run openfilings resolve "ASML" --market nl         # nl_lei_724500Y6DUVHQD6OXN27
+uv run openfilings resolve "NL0010273215"             # same LEI via ISIN
+uv run openfilings resolve "OR" --market fr            # L'OREAL (FR)
+uv run openfilings coverage my-universe.csv            # per-market funnel
+```
 
 ## Documentation
 
