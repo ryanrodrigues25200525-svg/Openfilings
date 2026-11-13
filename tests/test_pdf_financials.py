@@ -1623,3 +1623,46 @@ def _sgx_cash_flow_text() -> str:
     (450,000)
     (420,000)
     """
+
+
+def test_unilever_style_misaligned_scale_is_loudly_flagged() -> None:
+    """Issue #6 residual: a ~1000x scale misread (assets vs liabilities+equity)
+    is never returned as trustworthy - `validate_financials` reports
+    `ok: False` with the accounting-equation failure, instead of silently
+    trusting the extracted values. Currency guard already vetoes PEN for
+    FCA filings (see test_fca_filing_never_reports_pen_currency)."""
+
+    from openfilings.validation import validate_financials, validation_view
+
+    markdown = """
+    # Consolidated balance sheet
+
+    S/ 000
+
+    |  | 2025 | 2024 |
+    | --- | ---: | ---: |
+    | Total assets | 79,750 | 75,000 |
+    | Total liabilities | 60,000 | 58,000 |
+    | Total equity | 40,000 | 38,000 |
+    """
+
+    financials = extract_pdf_table_financials(
+        markdown,
+        _filing(period_end=date(2025, 12, 31), source="fca_nsm", filing_type="annual"),
+        source_url="https://example.test/unilever-20f.pdf",
+        sha256="p" * 64,
+    )
+    balance_sheet = financials.balance_sheet()
+    assert balance_sheet is not None
+    assert balance_sheet.currency != "PEN"
+
+    report = validate_financials(financials)
+    assert report is not None
+    view = validation_view(report)
+    assert view is not None
+    assert view["ok"] is False
+    assert view["checks_failed"] > 0
+    assert any(
+        finding["rule_id"] == "EQ.accounting_equation"
+        for finding in view["findings"]
+    )
