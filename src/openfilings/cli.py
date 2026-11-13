@@ -73,7 +73,7 @@ class StatementOption(StrEnum):
 
 @app.command()
 def search(
-    query: Annotated[str, typer.Argument(help="Company name to search for.")],
+    query: Annotated[str, typer.Argument(help="Company name, ticker, or ISIN.")],
     limit: Annotated[int, typer.Option(min=1, max=100)] = 10,
     source: Annotated[SourceOption, typer.Option(help="Filing source to search.")] = (
         SourceOption.all
@@ -545,6 +545,104 @@ def cache_prune(
             f"Compressed cache is now "
             f"{_format_bytes(compressed_bytes)}."
         )
+
+    _run(run())
+
+
+@app.command()
+def resolve(
+    query: Annotated[str, typer.Argument(help="Ticker, ISIN, LEI, or company name.")],
+    market: Annotated[
+        str | None,
+        typer.Option(
+            help="Two-letter market code (UK, NL, FR, ...) to disambiguate an "
+            "LEI-keyed market."
+        ),
+    ] = None,
+) -> None:
+    """Resolve a ticker or ISIN to an OpenFilings company ID."""
+
+    async def run() -> None:
+        async with OpenFilingsService.from_settings() as service:
+            company = await service.resolve_company(query, market=market)
+        if company is None:
+            typer.echo(f"No company matched {query!r}.", err=True)
+            raise typer.Exit(code=1)
+        typer.echo(
+            json.dumps(company.model_dump(mode="json"), indent=2, sort_keys=True)
+        )
+
+    _run(run())
+
+
+@app.command()
+def coverage(
+    tickers: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            dir_okay=False,
+            help="Ticker list file: TICKER[,MARKET[,NAME]] per line.",
+        ),
+    ],
+    market: Annotated[
+        str | None,
+        typer.Option(help="Default market for rows that omit one."),
+    ] = None,
+    concurrency: Annotated[int, typer.Option(min=1, max=16)] = 4,
+    statements: Annotated[
+        bool,
+        typer.Option(
+            "--statements/--no-statements",
+            help="Extract the latest accounts filing's statements per ticker.",
+        ),
+    ] = True,
+    json_out: Annotated[
+        Path | None,
+        typer.Option("--json", help="Write the full report as JSON."),
+    ] = None,
+    csv_out: Annotated[
+        Path | None,
+        typer.Option("--csv", help="Write one row per ticker as CSV."),
+    ] = None,
+) -> None:
+    """Sweep a ticker list: resolve, list filings, extract statements."""
+
+    async def run() -> None:
+        from openfilings.coverage import parse_ticker_list, render_summary, sweep
+
+        entries = parse_ticker_list(tickers.read_text(encoding="utf-8"))
+        if market is not None:
+            default_market = market.strip().upper()
+            entries = [
+                (query, item_market or default_market, name)
+                for query, item_market, name in entries
+            ]
+        async with OpenFilingsService.from_settings() as service:
+
+            async def resolver(query: str, item_market: str | None) -> Any:
+                return await service.resolve_company(query, market=item_market)
+
+            report = await sweep(
+                entries,
+                service=service,
+                resolver=resolver,
+                concurrency=concurrency,
+                with_statements=statements,
+            )
+        typer.echo(render_summary(report))
+        if csv_out is not None:
+            from openfilings.coverage import to_csv
+
+            csv_out.parent.mkdir(parents=True, exist_ok=True)
+            csv_out.write_text(to_csv(report), encoding="utf-8")
+            typer.echo(f"Wrote {csv_out}.")
+        if json_out is not None:
+            from openfilings.coverage import to_json
+
+            json_out.parent.mkdir(parents=True, exist_ok=True)
+            json_out.write_text(to_json(report), encoding="utf-8")
+            typer.echo(f"Wrote {json_out}.")
 
     _run(run())
 

@@ -15,8 +15,8 @@ from openfilings.adapters.bmv import BmvClient
 from openfilings.adapters.cvm import CvmClient
 from openfilings.adapters.dart import REPORT_CODE_PERIOD, DartClient
 from openfilings.adapters.edinet import EdinetClient
-from openfilings.adapters.esef import ENABLED_ESEF_MARKETS, EsefClient
-from openfilings.adapters.fca_nsm import FcaNsmClient
+from openfilings.adapters.esef import CONTENT_BASE_URL, ENABLED_ESEF_MARKETS, EsefClient
+from openfilings.adapters.fca_nsm import NSM_WEB_URL, FcaNsmClient
 from openfilings.adapters.kap import KapClient
 from openfilings.adapters.nse import NseClient
 from openfilings.adapters.sedar import (
@@ -28,6 +28,7 @@ from openfilings.adapters.sfc import CUIF_DATASET_URL, SfcClient
 from openfilings.adapters.sgx import SgxClient
 from openfilings.adapters.smv import SmvClient
 from openfilings.config import Settings
+from openfilings.crosswalk import Crosswalk
 from openfilings.domain import FilingDocument
 from openfilings.exceptions import (
     CompanyNotFoundError,
@@ -36,6 +37,7 @@ from openfilings.exceptions import (
     ExtractionError,
     FilingNotFoundError,
     FinancialsUnavailableError,
+    OpenFilingsError,
     SourceError,
 )
 from openfilings.extraction.document import OcrConverter, extract_document
@@ -62,6 +64,7 @@ from openfilings.models import (
     MajorHolderNotification,
     OcrMode,
     ReportingPeriod,
+    SourceName,
     SourceSelection,
     StatementType,
     deduplicate_companies_by_lei,
@@ -83,6 +86,11 @@ from openfilings.xbrl.pdf_statements import extract_pdf_ocr_financials
 from openfilings.xbrl.sfc_cuif_structured import extract_sfc_cuif_balance_sheet
 
 _Result = TypeVar("_Result")
+
+# Company-name words for match decisions ("Tesco" is a word of "TESCO PLC";
+# "SHEL" is not a word of "SHELL INTERNATIONAL FINANCE B.V.", so a SHEL
+# query must go on to the ticker crosswalk rather than accept the prefix).
+_NAME_WORD = re.compile(r"[^\W_]+")
 
 # FCA NSM has no generic "category" filter of its own, only disclosure type
 # codes. "DSH" (Director/PDMR Shareholding) and "HOL" (Holding(s) in Company)
@@ -132,6 +140,7 @@ class OpenFilingsService:
         ocr_max_pages: int = 250,
         ocr_executable: str = "tesseract",
         cache_max_mb: int = 512,
+        crosswalk: Crosswalk | None = None,
         owns_resources: bool = False,
     ) -> None:
         self._nsm = nsm_source
@@ -155,6 +164,7 @@ class OpenFilingsService:
         self._ocr_max_pages = ocr_max_pages
         self._ocr_executable = ocr_executable
         self._cache_max_bytes = cache_max_mb * 1024 * 1024
+        self._crosswalk = crosswalk
         self._owns_resources = owns_resources
 
     @classmethod
@@ -236,6 +246,7 @@ class OpenFilingsService:
             ocr_max_pages=settings.ocr_max_pages,
             ocr_executable=settings.ocr_executable,
             cache_max_mb=settings.cache_max_mb,
+            crosswalk=Crosswalk(settings=settings),
             owns_resources=True,
         )
 
@@ -324,8 +335,174 @@ class OpenFilingsService:
         companies = deduplicate_companies_by_lei(
             self._merge_companies([company for result in results for company in result])
         )[:limit]
+        if selection in {"all", "fca_nsm", "esef"} and (
+            not companies or not self._name_level_match(query, companies)
+        ):
+            # Ticker fallback. The LEI-keyed sources (FCA NSM and the ESEF
+            # jurisdictions) carry no ticker field, so a bare ticker matches
+            # no legal name and a search that should succeed returns nothing
+            # today. A ticker query can also come back with *unrelated*
+            # fuzzy hits from name-searching registries, so the fallback
+            # fires whenever nothing in the result set is a name-level
+            # match for the query. Every crosswalk answer is cached after
+            # the first lookup.
+            fallback = await self._crosswalk_search(query, source=selection)
+            if fallback:
+                seen = {company.id for company in fallback}
+                companies = [
+                    *fallback,
+                    *(company for company in companies if company.id not in seen),
+                ][:limit]
         self._cache.put_companies(companies)
         return companies
+
+    _TICKER_QUERY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,11}$")
+
+    @staticmethod
+    def _name_level_match(query: str, companies: list[Company]) -> bool:
+        """True when some result plausibly *is* the requested entity.
+
+        A match shares a whole *word* with the query, never just a leading
+        run of letters: "Tesco" matches "TESCO PLC", but "SHEL" does not
+        match "SHELL INTERNATIONAL FINANCE B.V." - that ticker belongs to
+        Shell plc, and the crosswalk is the only place that can say so.
+        Brand names in other scripts legitimately match nothing here - the
+        fallback then runs, finds nothing, and the name results stand.
+        """
+
+        needle = query.strip().casefold()
+        words = set(_NAME_WORD.findall(needle))
+        for company in companies:
+            if words & set(_NAME_WORD.findall((company.name or "").casefold())):
+                return True
+            ticker = (company.ticker or "").strip().casefold()
+            if ticker and (ticker == needle or ticker.startswith(needle)):
+                return True
+        return False
+
+    async def resolve_company(
+        self,
+        query: str,
+        *,
+        market: str | None = None,
+        limit: int = 5,
+        source: SourceSelection = "all",
+    ) -> Company | None:
+        """Resolve a ticker, ISIN, LEI, or name to one company record.
+
+        Name search runs first (cheap, cached). When it finds nothing for a
+        ticker-shaped query - or nothing in the requested LEI-keyed market -
+        the crosswalk resolves it: OpenFIGI maps the ticker or ISIN to a
+        legal name, GLEIF maps that name to an LEI, and a filings check
+        verifies the candidate before it is returned.
+        """
+
+        wanted = market.strip().upper() if market and market.strip() else None
+        companies = await self.search_companies(query, limit=limit, source=source)
+        if wanted is not None:
+            match = next((item for item in companies if item.market == wanted), None)
+            if match is not None and self._name_level_match(query, [match]):
+                return match
+            if self._lei_keyed_source(wanted) is not None:
+                resolved = await self._crosswalk_company(query, market=wanted)
+                if resolved is not None:
+                    return resolved
+            # A name the query only prefixes ("SHEL" -> "SHELL INTERNATIONAL
+            # FINANCE B.V.") is still better than nothing when the crosswalk
+            # has no verified answer - but it is never returned ahead of one.
+            return match
+        return companies[0] if companies else None
+
+    def _esef_id_prefixes(self) -> frozenset[str]:
+        return frozenset(
+            source.market.country_code.casefold() for source in self._esef_sources
+        )
+
+    def _lei_keyed_source(self, market: str) -> SourceName | None:
+        """Return the source whose company IDs are LEI-keyed for ``market``."""
+
+        if market == "UK":
+            return "fca_nsm"
+        for source in self._esef_sources:
+            if market in {source.market.market_code, source.market.country_code}:
+                return "esef"
+        return None
+
+    def _lei_keyed_source_for_company_id(self, company_id: str) -> SourceName | None:
+        prefix, separator, rest = company_id.partition("_")
+        if separator != "_":
+            return None
+        lowered = prefix.casefold()
+        if not rest.startswith("lei_"):
+            return None
+        if lowered == "uk":
+            return "fca_nsm"
+        if lowered in self._esef_id_prefixes():
+            return "esef"
+        return None
+
+    def _crosswalk_instance(self) -> Crosswalk | None:
+        return self._crosswalk
+
+    async def _crosswalk_search(
+        self, query: str, *, source: SourceSelection
+    ) -> list[Company]:
+        """Resolve a ticker-shaped query that matched no company name."""
+
+        stripped = query.strip()
+        if not self._TICKER_QUERY.fullmatch(stripped):
+            return []
+        company = await self._crosswalk_company(stripped, market=None)
+        if company is None:
+            return []
+        if source != "all" and source not in company.sources:
+            return []
+        return [company]
+
+    async def _crosswalk_company(
+        self, query: str, *, market: str | None
+    ) -> Company | None:
+        crosswalk = self._crosswalk_instance()
+        if crosswalk is None:
+            return None
+
+        async def verifier(company_id: str) -> bool:
+            source = self._lei_keyed_source_for_company_id(company_id)
+            if source is None:
+                return False
+            try:
+                filings = await self.list_filings(
+                    company_id, category="accounts", limit=1, source=source
+                )
+            except OpenFilingsError:
+                return False
+            return bool(filings)
+
+        try:
+            hit = await crosswalk.resolve(query, market=market, verifier=verifier)
+        except OpenFilingsError:
+            return None
+        if hit.company_id is None or hit.market is None or hit.lei is None:
+            return None
+        source = self._lei_keyed_source_for_company_id(hit.company_id)
+        if source is None:
+            return None
+        resolved_market = hit.market.upper()
+        if source == "esef":
+            source_url = f"{CONTENT_BASE_URL}entity/{hit.lei}"
+        else:
+            source_url = NSM_WEB_URL
+        return Company(
+            id=hit.company_id,
+            source_id=hit.lei,
+            name=hit.name or query,
+            sources=(source,),
+            lei=hit.lei,
+            market=resolved_market,
+            country_code=resolved_market,
+            ticker=hit.ticker,
+            source_url=source_url,
+        )
 
     async def search_disclosures(
         self,

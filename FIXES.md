@@ -186,14 +186,20 @@ primary statements' totals and little else.
 
 ## P4 — Usability and operations
 
-- [ ] **[#10](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/10) Brand and ticker names do not resolve (`PKO`, `Ford Otosan`).**
-  *Fix:* two separable pieces. (1) `ranked_matches` requires the query to be
-  a *substring* of a name field, so an extra token absent from the legal name
-  kills an otherwise strong match — a token-subset or best-partial score
-  fixes this class with no new data. (2) `PKO` appears nowhere in the legal
-  name and needs an alias source per adapter. Do (1); treat (2) as
-  per-source. Any change here needs near-miss tests, not just happy paths —
-  loosening the matcher risks false positives across thousands of issuers.
+- [ ] **[#10](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/10) Brand and ticker names do not resolve (`PKO`).**
+  *Fix:* (1) is done — `ranked_matches` tolerates an extra query token, so
+  "Ford Otosan" scores at least as well as "Ford", and the ticker half
+  landed as the OpenFIGI -> GLEIF crosswalk. What remains is the
+  trading-name -> legal-name bridge, and `PKO` shows where it stops: OpenFIGI
+  maps the Warsaw listing to "PKO BANK POLSKI SA", while the bank's GLEIF
+  record is "POWSZECHNA KASA OSZCZĘDNOŚCI BANK POLSKI SPÓŁKA AKCYJNA" (LEI
+  P4GTT6GF1W40CVIMFR43). GLEIF's name filter is a literal contains-match: the
+  OpenFIGI name returns 0 records, and `fuzzycompletions` answers only on the
+  registered head ("POWSZECHNA KASA"), not on "PKO BANK POLSKI SA" — so
+  `resolve PKO --market pl` says "No company matched". That bridge needs
+  alias data (a ticker/trading-name crosswalk per market), not a looser
+  matcher. Any change here needs near-miss tests: loosening the matcher risks
+  false positives across thousands of issuers.
 
 - [ ] **[#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15) Cached facts and a running MCP server both survive a fix.**
   *Fix:* stamp cached financials with an extractor version and treat a

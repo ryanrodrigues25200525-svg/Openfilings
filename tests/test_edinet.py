@@ -37,6 +37,24 @@ async def test_company_search_uses_official_cp932_code_archive() -> None:
 
 
 @pytest.mark.asyncio
+async def test_company_search_does_not_match_across_word_boundaries() -> None:
+    """Live, `openfilings resolve PKO` answered with "KSP Kokusai
+    Investments, LLC": the keyword matched the "ksp"+"kokusai" junction of a
+    whitespace-stripped archive field. A single-word keyword may match inside
+    one word of a name, but never across the boundary between two."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_company_archive())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = EdinetClient(client=http)
+        assert await client.search_companies("PKO") == []
+        kokusai = await client.search_companies("kokusai")
+
+    assert [company.id for company in kokusai] == ["jp_E37641"]
+
+
+@pytest.mark.asyncio
 async def test_document_lists_are_normalized_and_api_key_is_not_persisted() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params["Subscription-Key"] == "secret-key"
@@ -183,6 +201,21 @@ def _company_archive() -> bytes:
             "電気機器",
             "67580",
             "5010401067252",
+        ],
+        [
+            "E37641",
+            "外国法人",
+            "非上場",
+            "無",
+            "",
+            "12月31日",
+            "ＫＳＰ　Ｋｏｋｕｓａｉ　Ｉｎｖｅｓｔｍｅｎｔｓ，ＬＬＣ",  # noqa: RUF001
+            "",
+            "",
+            "4111 East 37th Street North, Wichita, Kansas 67220 U.S.A.",
+            "投資業",
+            "",
+            "",
         ],
     ]
     output = io.StringIO(newline="")

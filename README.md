@@ -93,7 +93,7 @@ carries the reproductions.
 
 **Usability and operations**
 
-- [ ] [#10](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/10) — brand and ticker names don't resolve (`PKO`, `Ford Otosan`), since matching is a substring test against the registered legal name
+- [ ] [#10](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/10) — brand and ticker names don't resolve (`PKO`, `Ford Otosan`), since matching is a substring test against the registered legal name. The ticker half is now covered for the LEI-keyed markets (UK and the 13 ESEF jurisdictions): `search`/`resolve` fall through to the keyless OpenFIGI → GLEIF crosswalk when a ticker-shaped query matches no name. Brand aliases and tickers in the native-registry markets remain open
 - [ ] [#15](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/15) — cached facts and a running MCP server both survive a fix, so a corrected figure may not reach you until you restart and re-extract
 - [ ] [#13](https://github.com/ryanrodrigues25200525-svg/Openfilings/issues/13) — every Dependabot PR fails CI because `uv.lock` is not regenerated
 
@@ -343,6 +343,31 @@ The default `all` source searches every configured listed-company market:
 uv run openfilings search "Tesco"
 uv run openfilings filings uk_lei_2138002P5RNKC5W2JZ46 --limit 50
 ```
+
+Tickers work even where the regulator publishes no ticker field. UK and the 13
+ESEF jurisdictions key companies by LEI, so a query that looks like a ticker or
+ISIN and matches no legal name is resolved through two keyless registries:
+OpenFIGI maps the ticker or ISIN to a legal name, GLEIF maps that name to an
+LEI, and a filings lookup verifies the candidate before it is returned. Answers
+are cached under `OPENFILINGS_DATA_DIR`.
+
+```bash
+uv run openfilings search "SHEL"
+uv run openfilings resolve "ASML" --market nl
+uv run openfilings resolve "NL0010273215"
+```
+
+`openfilings coverage` runs a whole ticker list through the same pipeline —
+resolve, list filings, extract the latest accounts filing's statements — and
+reports what worked per market, with the reason each failure failed:
+
+```bash
+uv run openfilings coverage my-universe.csv --csv coverage.csv --json coverage.json
+```
+
+Input is one `TICKER[,MARKET[,NAME]]` per line (`#` starts a comment). The
+summary is a per-market funnel — resolved, with filings, with statements — plus
+the top failure reasons.
 
 Japanese company search works without a key. Filing history and download use
 EDINET API v2 and require `EDINET_API_KEY`:

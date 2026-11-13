@@ -13,9 +13,55 @@ All notable changes to OpenFilings are documented in this file.
   reports verified / unverifiable / failed per issuer instead of
   pass/fail, so "unverifiable" stays visible rather than reading as
   success. Closes #9.
+- Added ticker and ISIN resolution for the LEI-keyed markets (UK FCA NSM and
+  the 13 ESEF jurisdictions), whose registries publish no ticker field. A
+  ticker-shaped query that matches no legal name now falls through to two
+  keyless registries - OpenFIGI maps the ticker or ISIN to a legal name,
+  GLEIF maps that name to an LEI - and the candidate is verified against a
+  filings lookup before it is returned; answers are cached in
+  `OPENFILINGS_DATA_DIR/crosswalk.json`. Addresses the ticker half of #10
+  (brand aliases and native-registry tickers remain open).
+- Added `openfilings resolve QUERY [--market]` (ticker, ISIN, LEI, or name
+  to a company ID) and `openfilings coverage TICKERS_FILE`
+  (`openfilings.coverage`), which sweeps a ticker list through resolve ->
+  filings -> statements with bounded concurrency and reports a per-market
+  funnel plus the failure reason per ticker, as a human summary and
+  optional CSV/JSON.
 
 ### Fixed
 
+- Company-name matching no longer accepts a bare letter prefix as a whole
+  answer. Live, `openfilings resolve SHEL --market uk` returned SHELL
+  INTERNATIONAL FINANCE B.V. because "shel" is a letter prefix of "shell";
+  a name result now has to share a whole word with the query, so a
+  market-scoped resolve whose only name hit is a prefix consults the ticker
+  crosswalk first. The ticker's own company wins where the crosswalk can
+  verify one (Shell plc, uk_lei_21380068P1DRHMJ8KU70); the prefix hit still
+  stands where it cannot, so the NSM client's token-prefix recall ("Glaxo"
+  reaching GLAXOSMITHKLINE PLC) is unaffected - such a query costs one
+  crosswalk lookup.
+- GLEIF name search queries the leading words of a legal name and ranks
+  punctuation-insensitive exact-name matches first, retrying the name as
+  written only when the prepared query found no exact match. GLEIF's name
+  filter is a literal contains-match, so OpenFIGI's "ASML HOLDING NV"
+  reached "ASML Holding NV ADRhedged(TM)", a US fund, while never reaching
+  the register's "ASML Holding N.V." - live, `resolve NL0010273215`
+  returned that fund's LEI. The same ISIN now resolves to ASML Holding N.V.
+  (nl_lei_724500Y6DUVHQD6OXN27), with candidates from both queries kept.
+- A bare ticker with no exchange hint now reads every equity row of the
+  OpenFIGI mapping response, not just the first. The response lists one row
+  per exchange - bare `TSCO` carries the London row plus a run of US rows
+  for Tractor Supply - so reading only the first row left the
+  verified-listing preference blind to any supported listing that was not
+  first (pinned in `test_bare_ticker_prefers_the_verified_exchange`).
+- EDINET company search no longer matches a keyword across the boundary
+  between two archive words: its normalization deleted separators, so the
+  field "ＫＳＰ　Ｋｏｋｕｓａｉ　Ｉｎｖｅｓｔｍｅｎｔｓ，ＬＬＣ" became one
+  word containing "pko" in the "ksp"+"kokusai" junction, and live
+  `openfilings resolve PKO` returned that filer. Separators now become
+  spaces; a single-word keyword may match inside one word but never across
+  two, which "kokusai" and "Sony" still do (verified against the real
+  archive) and "PKO" no longer does.
 - Search results now deduplicate same-LEI company records to one record per
   legal entity (issue #12, decided option 1): one LEI filed in two ESEF
   jurisdictions previously produced two company IDs, and a bare query's

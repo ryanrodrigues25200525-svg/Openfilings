@@ -59,6 +59,24 @@ _DOCUMENT_TYPES: dict[str, tuple[str, str]] = {
 }
 
 
+def _field_matches(query: str, field: str) -> bool:
+    """Whether a normalized query keyword matches a normalized field.
+
+    For a single-word query the keyword may match inside one word of the
+    field - "shel" reaching "SHELL" - but never across a word boundary:
+    the whole-field substring would let "PKO" match "KSP Kokusai ...",
+    whose joined form contains "pko" in the "ksp"+"kokusai" junction.
+    """
+
+    if not field:
+        return False
+    if query in field:
+        return True
+    if " " in query:
+        return False
+    return any(query in word for word in field.split(" "))
+
+
 class EdinetClient:
     """Search EDINET filers and retrieve v2 filing metadata/documents."""
 
@@ -116,7 +134,7 @@ class EdinetClient:
             )
             normalized_fields = tuple(self._normalize_search(value) for value in fields)
             if not normalized or not any(
-                normalized in value for value in normalized_fields
+                _field_matches(normalized, value) for value in normalized_fields
             ):
                 continue
             if normalized in normalized_fields[:2]:
@@ -439,8 +457,19 @@ class EdinetClient:
 
     @staticmethod
     def _normalize_search(value: str) -> str:
+        """Fold fullwidth text to ASCII and keep words apart.
+
+        Separators become spaces instead of vanishing: joining a field
+        into one word lets a keyword match across a word boundary of
+        unrelated words (live, "PKO" matched "KSP Kokusai Investments,
+        LLC"), which `resolve PKO` then returned as a company.
+        """
+
         normalized = unicodedata.normalize("NFKC", value).casefold()
-        return "".join(character for character in normalized if character.isalnum())
+        folded = "".join(
+            character if character.isalnum() else " " for character in normalized
+        )
+        return " ".join(folded.split())
 
     @staticmethod
     def _json_error(response: httpx.Response) -> str:
