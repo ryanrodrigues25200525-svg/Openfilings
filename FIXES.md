@@ -113,7 +113,7 @@ primary statements' totals and little else.
   others on `other_jurisdictions`. Per-jurisdiction IDs still resolve and
   each lists only its own market's filings; only the search layer merges.
 
-- [ ] **[#14](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/14) Some ESEF issuers return a years-old "latest" filing.**
+- [x] **[#14](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/14) Some ESEF issuers return a years-old "latest" filing.**
   *Fix:* first establish which explanation applies — for one affected issuer,
   compare what filings.xbrl.org returns for the LEI *without* the country
   filter against what the adapter returns *with* it. That single comparison
@@ -136,7 +136,7 @@ primary statements' totals and little else.
 
 ## P3 — Verification
 
-- [ ] **[#7](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/7) The Sweden and Singapore regression guards cannot fire.**
+- [x] **[#7](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/7) The Sweden and Singapore regression guards cannot fire.**
   *Fix:* pin reference facts in `benchmarks.py`, transcribed by hand from the
   published reports. That file's own rule applies — never populate it from
   extractor output.
@@ -201,7 +201,7 @@ primary statements' totals and little else.
   matcher. Any change here needs near-miss tests: loosening the matcher risks
   false positives across thousands of issuers.
 
-- [ ] **[#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15) Cached facts and a running MCP server both survive a fix.**
+- [x] **[#15](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/15) Cached facts and a running MCP server both survive a fix.**
   *Fix:* stamp cached financials with an extractor version and treat a
   mismatch as a cache miss. That makes corrections propagate on their own and
   subsumes the alternatives (a cache-invalidation command, changelog notes).
@@ -219,7 +219,7 @@ primary statements' totals and little else.
   doc generation - and verified it actually fails when a tool is removed
   from the docs, not just that it happens to pass today.
 
-- [ ] **[#13](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/13) Every Dependabot PR fails CI because `uv.lock` is not regenerated.**
+- [x] **[#13](https://github.com/ryanrodrigues25200525-svg/openfilings/issues/13) Every Dependabot PR fails CI because `uv.lock` is not regenerated.**
   *Fix:* add a lockfile-refresh step so the PRs are testable, or restrict
   Dependabot to security updates and bump by hand with `uv lock --upgrade`.
   Do not drop `--locked` from CI — it is what makes the build reproducible.
