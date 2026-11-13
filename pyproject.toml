@@ -41,7 +41,7 @@ dependencies = [
   "markdownify>=1.2,<2",
   # The mcp<2 pin is deliberate: mcp 2.x breaks stdio MCP servers in this
   # setup (see issue #13). Do not widen to <3 on Dependabot's suggestion.
-  "mcp>=1.27,<2",
+  "mcp>=1.30,<2",
   "pydantic>=2.10,<3",
   "pyjwt>=2.14",
   "pymupdf4llm>=1.28,<2",
