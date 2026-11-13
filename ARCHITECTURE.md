@@ -118,7 +118,9 @@ Most market connectors implement the `PublicMarketClient` protocol:
 class PublicMarketClient(Protocol):
     source: SourceName
 
-    async def search_companies(self, query: str, *, limit: int = 10) -> list[Company]: ...
+    async def search_companies(
+        self, query: str, *, limit: int = 10
+    ) -> list[Company]: ...
     async def list_filings(
         self,
         company_id: str,

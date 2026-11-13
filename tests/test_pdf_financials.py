@@ -1663,6 +1663,5 @@ def test_unilever_style_misaligned_scale_is_loudly_flagged() -> None:
     assert view["ok"] is False
     assert view["checks_failed"] > 0
     assert any(
-        finding["rule_id"] == "EQ.accounting_equation"
-        for finding in view["findings"]
+        finding["rule_id"] == "EQ.accounting_equation" for finding in view["findings"]
     )
